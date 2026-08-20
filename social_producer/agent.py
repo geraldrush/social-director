@@ -1,5 +1,12 @@
 from google.adk.agents.llm_agent import Agent
 
+from .database import (
+    create_campaign_record,
+    get_campaigns,
+    get_next_campaign_id,
+)
+
+
 def get_brand_details(brand_name: str) -> dict:
     """Get stored information about a brand."""
 
@@ -12,92 +19,139 @@ def get_brand_details(brand_name: str) -> dict:
             "services": [
                 "Web development",
                 "Software development",
-                "IT training"
-            ]
+                "IT training",
+            ],
         }
     }
 
     brand = brands.get(brand_name.lower())
 
     if brand:
-        return brand
+        return {
+            "status": "success",
+            "brand": brand,
+        }
 
     return {
-        "error": f"No information found for {brand_name}"
+        "status": "not_found",
+        "message": f"No stored information was found for {brand_name}.",
     }
 
-campaigns = []
 
 def create_campaign(
     brand_name: str,
     objective: str,
     target_audience: str,
     platforms: list[str],
-    duration_days: int
+    duration_days: int,
 ) -> dict:
-    """Create a new social media campaign."""
+    """Create a social media campaign and store it in ClickHouse."""
 
-    campaign = {
-        "id": len(campaigns) + 1,
-        "brand_name": brand_name,
-        "objective": objective,
-        "target_audience": target_audience,
-        "platforms": platforms,
-        "duration_days": duration_days,
-        "status": "draft"
-    }
+    campaign_id = get_next_campaign_id()
 
-    campaigns.append(campaign)
+    create_campaign_record(
+        campaign_id=campaign_id,
+        brand_name=brand_name,
+        objective=objective,
+        target_audience=target_audience,
+        platforms=platforms,
+        duration_days=duration_days,
+        status="draft",
+    )
 
     return {
         "status": "success",
-        "message": "Campaign created successfully.",
-        "campaign": campaign
+        "message": "Campaign created and stored in ClickHouse.",
+        "campaign": {
+            "campaign_id": campaign_id,
+            "brand_name": brand_name,
+            "objective": objective,
+            "target_audience": target_audience,
+            "platforms": platforms,
+            "duration_days": duration_days,
+            "status": "draft",
+        },
     }
 
+
+def list_campaigns() -> dict:
+    """Retrieve all campaigns stored in ClickHouse."""
+
+    campaigns = get_campaigns()
+
+    return {
+        "status": "success",
+        "count": len(campaigns),
+        "campaigns": campaigns,
+    }
+
+
 root_agent = Agent(
-    model='gemini-3.5-flash',
-    name='social_media_producer',
-    
+    model="gemini-3.5-flash",
+    name="social_media_producer",
 
     description=(
-        'An AI social media producer that helps businesses plan '
-        'and create social media campaigns.'
+        "An AI Social Media Producer that helps businesses plan, "
+        "create and manage social media campaigns."
     ),
 
     instruction="""
-You are an AI Social Media Producer.
+You are the AI Social Media Producer.
 
-Your job is to help businesses plan and produce effective
+Your responsibility is to help businesses plan and manage professional
 social media campaigns.
+
+You currently have access to the following tools:
+
+1. get_brand_details
+   Use this tool when the user mentions an existing brand and you need
+   information about the brand.
+
+2. list_campaigns
+   Use this tool when the user asks about existing campaigns or campaigns
+   currently stored in the system.
+
+3. create_campaign
+   Use this tool to create and store a new campaign in ClickHouse.
 
 When a user gives you a campaign brief:
 
 1. Understand the business or brand.
-2. Identify the campaign objective.
-3. Identify the target audience.
-4. Recommend suitable social media platforms.
-5. Develop appropriate content ideas.
-6. Create platform-specific social media copy.
-7. Suggest a call to action.
+2. Retrieve stored brand information when available.
+3. Identify the campaign objective.
+4. Identify the target audience.
+5. Identify or recommend suitable social media platforms.
+6. Determine the campaign duration.
+7. Develop appropriate content ideas and campaign direction.
 
-Do not assume information that the user has not provided.
-Ask for important missing information when necessary.
+Do not invent important campaign information.
 
-For now, you only PLAN and CREATE content.
-You do not publish or schedule posts.
+If essential information is missing, ask the user for it before proceeding.
 
-When enough campaign information has been collected, summarise
-the proposed campaign and ask the user for confirmation before
-creating it.
+IMPORTANT CAMPAIGN CREATION RULE:
 
-Only call the create_campaign tool after the user clearly
-confirms that they want the campaign created.
+Before creating a campaign, summarise the proposed campaign and ask the user
+for explicit confirmation.
 
-New campaigns must remain in draft status.
+You must only call the create_campaign tool after the user clearly confirms
+that they want the campaign created.
+
+All newly created campaigns must remain in draft status.
+
+Do not claim that content, strategies, posts, calendars or other assets have
+been saved unless a tool actually confirms that those assets were stored.
+
+For now, the system can store campaign details only.
+
+Do not claim that posts have been published or scheduled.
+
+When reporting information retrieved from tools, base your response on the
+actual tool result rather than assuming additional actions have occurred.
 """,
-tools=[
-    get_brand_details,
-    create_campaign,
-],
+
+    tools=[
+        get_brand_details,
+        create_campaign,
+        list_campaigns,
+    ],
 )
