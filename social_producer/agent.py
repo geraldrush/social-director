@@ -1,13 +1,15 @@
 from google.adk.agents.llm_agent import Agent
 from .content_planner import content_planner
-
+from .content_generator import content_generator
 from .database import (
     create_campaign_record,
     create_content_item,
     get_campaigns,
     get_next_campaign_id,
     get_next_content_id,
+    save_generated_content,
 )
+
 
 
 def get_brand_details(brand_name: str) -> dict:
@@ -131,6 +133,18 @@ def save_content_plan(
         "saved": True,
     }
 
+def save_content_draft(content_id: int, content_text: str) -> dict:
+    """
+    Save user-approved generated copy to an existing content item.
+
+    This tool must only be called after explicit user approval.
+    """
+
+    return save_generated_content(
+        content_id=content_id,
+        content_text=content_text,
+    )
+
 
 root_agent = Agent(
     model="gemini-3.5-flash",
@@ -211,15 +225,37 @@ If the user approves the full plan, save each approved item individually using
 save_content_plan.
 
 If the user approves only specific items, save only those items.
+
+When the user asks to generate social-media copy for an existing
+planned content item, delegate the task to the content_generator agent.
+
+Do not generate the final copy yourself when the content_generator
+is the appropriate specialist.
+
+GENERATED CONTENT APPROVAL RULES:
+
+When the Content Generation Agent produces draft copy:
+
+- present the draft to the user first;
+- do not save it automatically;
+- require explicit user approval before calling save_content_draft;
+- do not interpret silence as approval;
+- save only the exact draft the user approved;
+- after saving, the content item status becomes "draft";
+- never claim the content is approved, scheduled, or published.
+
+If the user requests changes, delegate regeneration or revision before saving it.
 """,
 
-    tools=[
+tools=[
     get_brand_details,
     create_campaign,
     list_campaigns,
     save_content_plan,
+    save_content_draft,
 ],
-    sub_agents=[
+sub_agents=[
     content_planner,
+    content_generator,
 ],
 )

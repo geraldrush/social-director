@@ -281,3 +281,86 @@ def get_content_items(campaign_id=None):
         )
 
     return content_items
+
+def get_content_item_by_id(content_id: int):
+    """
+    Retrieve one content item from ClickHouse by content ID.
+
+    Returns None if the item does not exist.
+    """
+
+    result = client.query(
+        """
+        SELECT
+            content_id,
+            campaign_id,
+            platform,
+            content_type,
+            topic,
+            campaign_day,
+            content_purpose,
+            content_text,
+            status,
+            scheduled_at,
+            created_at
+        FROM social_producer.content_items
+        WHERE content_id = {content_id:UInt64}
+        LIMIT 1
+        """,
+        parameters={"content_id": content_id},
+    )
+
+    if not result.result_rows:
+        return None
+
+    row = result.result_rows[0]
+
+    return {
+        "content_id": row[0],
+        "campaign_id": row[1],
+        "platform": row[2],
+        "content_type": row[3],
+        "topic": row[4],
+        "campaign_day": row[5],
+        "content_purpose": row[6],
+        "content_text": row[7],
+        "status": row[8],
+        "scheduled_at": row[9],
+        "created_at": row[10],
+    }
+
+
+def save_generated_content(content_id: int, content_text: str):
+    """
+    Save generated social-media copy for an existing planned content item.
+
+    The content item transitions from planned to draft.
+    """
+
+    existing_item = get_content_item_by_id(content_id)
+
+    if existing_item is None:
+        return {
+            "saved": False,
+            "error": f"Content item {content_id} was not found.",
+        }
+
+    client.command(
+        """
+        ALTER TABLE social_producer.content_items
+        UPDATE
+            content_text = {content_text:String},
+            status = 'draft'
+        WHERE content_id = {content_id:UInt64}
+        """,
+        parameters={
+            "content_id": content_id,
+            "content_text": content_text,
+        },
+    )
+
+    return {
+        "saved": True,
+        "content_id": content_id,
+        "status": "draft",
+    }

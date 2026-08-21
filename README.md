@@ -2035,3 +2035,731 @@ Commit
  v
 Proceed
 ```
+---
+
+# Content Generation Agent Milestone
+
+The project now includes a second specialist agent:
+
+```text
+content_generator
+```
+
+The Content Generation Agent is responsible for converting approved planned content into platform-specific draft social-media copy.
+
+This extends the multi-agent architecture from:
+
+```text
+Social Media Producer / Orchestrator
+        |
+        +--- Content Planning Agent
+```
+
+to:
+
+```text
+Social Media Producer / Orchestrator
+        |
+        +--- Content Planning Agent
+        |
+        +--- Content Generation Agent
+```
+
+The two specialists have deliberately separate responsibilities.
+
+```text
+Content Planning Agent
+        |
+        v
+Decides WHAT content should be created
+
+
+Content Generation Agent
+        |
+        v
+Decides HOW the actual post should be written
+```
+
+This separation prevents a single agent from controlling the entire content-production workflow.
+
+---
+
+## Content Generation Workflow
+
+The implemented workflow is:
+
+```text
+User
+ |
+ v
+Social Media Producer / Orchestrator
+ |
+ | delegation
+ v
+Content Generation Agent
+ |
+ +------------------------+
+ |                        |
+ v                        v
+Content Item          Campaign Context
+ |                        |
+ +-----------+------------+
+             |
+             v
+         ClickHouse
+             |
+             v
+      Draft Generation
+             |
+             v
+        Human Review
+             |
+             v
+      Explicit Approval
+             |
+             v
+   save_content_draft()
+             |
+             v
+       ClickHouse Update
+             |
+             v
+       status = draft
+```
+
+The Content Generation Agent does not have direct database write access.
+
+The root Social Media Producer controls persistence after explicit human approval.
+
+---
+
+## Content Lookup
+
+A new database function was introduced:
+
+```text
+get_content_item_by_id()
+```
+
+This retrieves an individual content item from ClickHouse using its `content_id`.
+
+The function returns the planning and content information associated with the item, including:
+
+```text
+content_id
+campaign_id
+platform
+content_type
+topic
+campaign_day
+content_purpose
+content_text
+status
+scheduled_at
+created_at
+```
+
+This allows specialist agents to work with a specific content item rather than loading an entire campaign's content collection.
+
+---
+
+## Content Generator Context
+
+Before generating copy, the Content Generation Agent retrieves:
+
+1. the requested content item; and
+2. the campaign associated with that content item.
+
+The resulting context includes information such as:
+
+```text
+Brand
+Campaign objective
+Target audience
+Platform
+Content type
+Topic
+Campaign day
+Content purpose
+Current content status
+```
+
+This allows generated content to remain aligned with both the planned item and its parent campaign.
+
+---
+
+## Platform-Aware Generation
+
+The Content Generation Agent applies platform-specific guidance.
+
+For Facebook, generated content should generally be:
+
+```text
+conversational
+accessible
+engaging
+interaction-oriented
+```
+
+For LinkedIn, generated content should generally be:
+
+```text
+professional
+useful
+credible
+career/professional audience appropriate
+```
+
+This behaviour will evolve as additional platforms are introduced.
+
+---
+
+## Content Generation Grounding
+
+Testing revealed an important grounding issue.
+
+One planned content item contained the topic:
+
+```text
+The growing demand for IT professionals in South Africa
+```
+
+The first generated draft treated the topic itself as evidence that demand for IT professionals was increasing.
+
+This exposed an important distinction:
+
+```text
+PLANNED TOPIC
+     !=
+VERIFIED FACT
+```
+
+A content topic describes what an item is intended to discuss.
+
+It does not prove that factual claims contained in the topic are true.
+
+The Content Generation Agent's grounding instructions were therefore strengthened.
+
+The generator must not treat either:
+
+```text
+topic
+```
+
+or:
+
+```text
+content_purpose
+```
+
+as factual evidence.
+
+Claims involving areas such as:
+
+```text
+market growth
+employment growth
+industry trends
+statistics
+customer success
+improved outcomes
+```
+
+require supporting information before they can be presented as established facts.
+
+---
+
+## Grounding Failure Test
+
+Content ID 5 was used to test this behaviour.
+
+The planned item was:
+
+```text
+Content ID:       5
+Campaign ID:      2
+Platform:         LinkedIn
+Content Type:     awareness
+Campaign Day:     3
+
+Topic:
+The growing demand for IT professionals in South Africa
+
+Purpose:
+Highlight the industry demand and employment landscape
+for tech learners.
+```
+
+The Content Generation Agent correctly identified that the requested topic would require verified supporting information.
+
+Instead of inventing employment statistics, industry reports, or market trends, it returned a grounding warning and requested verified information.
+
+This confirmed:
+
+```text
+Unsupported factual premise detected       [✓]
+Statistics were not invented                [✓]
+Market claims were not fabricated           [✓]
+Additional evidence was requested           [✓]
+Database remained unchanged                 [✓]
+```
+
+Content ID 5 remained:
+
+```text
+status = planned
+content_text = ""
+```
+
+---
+
+## Grounded Generation Test
+
+A second planned item was selected that did not require unsupported external facts.
+
+Content ID 4 contained:
+
+```text
+Campaign ID:      2
+Platform:         Facebook
+Content Type:     engagement
+Campaign Day:     4
+
+Topic:
+Which IT skill would you most like to learn?
+
+Purpose:
+Encourage technology learners to share which practical
+IT skills they are most interested in learning.
+```
+
+The Content Generation Agent successfully generated Facebook copy for this item.
+
+Because the post was primarily an engagement question, the generator could produce useful content without inventing statistics, testimonials, prices, deadlines, or other unsupported business information.
+
+---
+
+## Read-Only Generation Boundary
+
+After draft generation, Content ID 4 was checked directly in ClickHouse through the Python data layer.
+
+It remained:
+
+```text
+content_text = ""
+status = planned
+```
+
+This confirmed that generation alone does not modify persistent application state.
+
+The boundary is therefore:
+
+```text
+Content Generation Agent
+        |
+        v
+Generate proposal
+        |
+        X
+   NO DATABASE WRITE
+        |
+        v
+Human must approve first
+```
+
+---
+
+## Approved Draft Persistence
+
+After proving the read-only generation workflow, controlled draft persistence was introduced.
+
+The database layer now contains:
+
+```text
+save_generated_content()
+```
+
+The root orchestrator exposes the controlled agent tool:
+
+```text
+save_content_draft()
+```
+
+The Content Generation Agent itself does not receive this write tool.
+
+The responsibility boundary is:
+
+```text
+Content Generation Agent
+        |
+        v
+Generate draft
+        |
+        v
+Return draft to user
+        |
+        v
+Human approval
+        |
+        v
+Social Media Producer
+        |
+        v
+save_content_draft()
+        |
+        v
+save_generated_content()
+        |
+        v
+ClickHouse
+```
+
+This preserves human control over persistent state changes.
+
+---
+
+## Planned-to-Draft State Transition
+
+When an approved generated draft is persisted, the content item transitions from:
+
+```text
+status = planned
+content_text = ""
+```
+
+to:
+
+```text
+status = draft
+content_text = "<approved generated copy>"
+```
+
+This creates the first implemented content lifecycle transition:
+
+```text
+planned
+   |
+   | Content Generation Agent
+   |
+   v
+Generated Proposal
+   |
+   | Human approval
+   |
+   v
+draft
+```
+
+Future stages remain:
+
+```text
+draft
+  |
+  v
+review
+  |
+  v
+approved
+  |
+  v
+scheduled
+  |
+  v
+published
+```
+
+These later transitions have not yet been implemented.
+
+---
+
+## ClickHouse Update Behaviour
+
+Campaign and content creation primarily use inserts.
+
+Saving generated content is different because the existing `content_items` row must transition from `planned` to `draft`.
+
+The current implementation performs a ClickHouse update mutation to change:
+
+```text
+content_text
+status
+```
+
+for the existing content item.
+
+Conceptually:
+
+```text
+Existing ClickHouse Row
+
+content_id = 4
+content_text = ""
+status = planned
+
+        |
+        | approved draft
+        v
+
+Updated ClickHouse Row
+
+content_id = 4
+content_text = "<generated copy>"
+status = draft
+```
+
+This introduced another ClickHouse concept into the project: mutation of existing analytical data rather than only append operations.
+
+As the project evolves, the suitability of mutations versus event-based state tracking can be revisited.
+
+---
+
+## Successful End-to-End Generation Test
+
+Content ID 4 was used for the complete workflow.
+
+The Social Media Producer delegated generation to the Content Generation Agent.
+
+The specialist generated Facebook copy.
+
+Before approval, the database was independently checked and still contained:
+
+```text
+content_text = ""
+status = planned
+```
+
+The user then explicitly approved the generated draft.
+
+The Social Media Producer persisted the approved copy.
+
+A second independent database query confirmed:
+
+```text
+content_id = 4
+status = draft
+content_text = "<approved Facebook copy>"
+```
+
+The original planning metadata remained associated with the same content item.
+
+---
+
+## Proven Content Generation Workflow
+
+The project has now demonstrated:
+
+```text
+User
+ |
+ v
+Social Media Producer / Orchestrator
+ |
+ v
+Content Generation Agent
+ |
+ v
+Content + Campaign Retrieval
+ |
+ v
+ClickHouse
+ |
+ v
+Grounding Check
+ |
+ v
+Platform-Specific Draft
+ |
+ v
+Human Review
+ |
+ v
+Explicit Approval
+ |
+ v
+Social Media Producer
+ |
+ v
+save_content_draft()
+ |
+ v
+ClickHouse Mutation
+ |
+ v
+status = draft
+```
+
+The following capabilities have therefore been tested:
+
+```text
+[✓] Second specialist agent
+[✓] Root-to-generator delegation
+[✓] Individual content lookup
+[✓] Campaign-context retrieval
+[✓] Platform-aware generation
+[✓] Content grounding
+[✓] Unsupported-claim detection
+[✓] Read-only generation
+[✓] Human approval
+[✓] Controlled database write
+[✓] planned → draft transition
+[✓] Independent database verification
+```
+
+---
+
+## Current Multi-Agent Architecture
+
+The implemented architecture is now:
+
+```text
+                    User
+                     |
+                     v
+          Social Media Producer
+             / Orchestrator
+                     |
+          +----------+----------+
+          |                     |
+          v                     v
+ Content Planning Agent   Content Generation Agent
+          |                     |
+          v                     v
+   Content Strategy        Draft Copy
+          |                     |
+          +----------+----------+
+                     |
+                     v
+                 ClickHouse
+```
+
+Current specialist status:
+
+```text
+Social Media Producer / Orchestrator    [✓]
+        |
+        +--- Content Planning Agent     [✓]
+        |
+        +--- Content Generation Agent   [✓]
+        |
+        +--- Review Agent               [ ]
+        |
+        +--- Analytics Agent            [ ]
+        |
+        +--- Optimisation Agent         [ ]
+```
+
+---
+
+## Human-in-the-Loop Boundaries
+
+The project now contains two separate approval boundaries.
+
+### Campaign Creation
+
+```text
+Campaign Proposal
+      |
+      v
+Human Approval
+      |
+      v
+Campaign saved
+```
+
+### Content Production
+
+```text
+Content Plan
+      |
+      v
+Human Approval
+      |
+      v
+status = planned
+      |
+      v
+Content Generation
+      |
+      v
+Human Approval
+      |
+      v
+status = draft
+```
+
+This means neither campaign creation nor generated content persistence happens solely because an AI agent decided to perform the action.
+
+---
+
+## Current Content Lifecycle
+
+Implemented:
+
+```text
+                 Human approval
+                       |
+                       v
+Content Plan ------> planned
+                       |
+                       | Content Generation
+                       v
+                Generated Proposal
+                       |
+                       | Human approval
+                       v
+                     draft
+```
+
+Planned:
+
+```text
+draft
+  |
+  v
+Review Agent
+  |
+  v
+review / approved
+  |
+  v
+scheduling
+  |
+  v
+published
+```
+
+---
+
+## Next Development Milestone
+
+The next planned specialist is the:
+
+```text
+Review Agent
+```
+
+Its role will be different from the Content Generation Agent.
+
+The generator asks:
+
+```text
+How should this post be written?
+```
+
+The Review Agent will eventually ask:
+
+```text
+Should this draft be allowed to progress?
+```
+
+Potential review responsibilities include:
+
+- checking factual grounding;
+- checking alignment with the campaign;
+- checking platform suitability;
+- identifying unsupported claims;
+- checking whether required brand information is missing;
+- identifying obvious quality problems; and
+- recommending approval, revision, or rejection.
+
+The Review Agent will first be implemented as a read-only reviewer before any additional state transition is introduced.
