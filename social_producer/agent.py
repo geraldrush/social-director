@@ -1,4 +1,5 @@
 from google.adk.agents.llm_agent import Agent
+from .content_planner import content_planner
 
 from .database import (
     create_campaign_record,
@@ -154,4 +155,7 @@ actual tool result rather than assuming additional actions have occurred.
         create_campaign,
         list_campaigns,
     ],
+    sub_agents=[
+    content_planner,
+],
 )

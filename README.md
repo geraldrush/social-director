@@ -581,3 +581,371 @@ Commit
 Proceed
 ```
 
+## Content Planning and Multi-Agent Orchestration
+
+The project has started evolving from a single-agent implementation into a specialised multi-agent architecture.
+
+The original `social_media_producer` agent remains the root agent and is being developed into the system orchestrator.
+
+The first specialist agent introduced is:
+
+```text
+content_planner
+```
+
+Its responsibility is to determine **what content should be produced for an existing campaign**.
+
+The Content Planning Agent does not currently:
+
+* generate final social-media copy;
+* publish content;
+* schedule content;
+* modify campaigns; or
+* write content plans to ClickHouse.
+
+This separation is intentional. Content planning and content generation will eventually be handled as different responsibilities.
+
+### Current Multi-Agent Architecture
+
+The currently implemented agent architecture is:
+
+```text
+User
+ |
+ v
+Social Media Producer
+    Orchestrator
+ |
+ | delegates content-planning requests
+ v
+Content Planning Agent
+ |
+ +-------------------+
+ |                   |
+ v                   v
+Campaign Data    Existing Content
+ |                   |
+ +---------+---------+
+           |
+           v
+       ClickHouse
+```
+
+The `social_media_producer` registers the Content Planning Agent as a specialist sub-agent.
+
+When a request concerns content planning for an existing campaign, the root agent can delegate the task to the specialist rather than performing the specialist's reasoning itself.
+
+This is the first implemented step toward the planned team-of-agents architecture.
+
+---
+
+## Content Items
+
+A new ClickHouse table has been introduced:
+
+```text
+social_producer.content_items
+```
+
+The table stores individual pieces of content associated with campaigns.
+
+The current relationship is:
+
+```text
+campaigns
+    |
+    | 1:N
+    v
+content_items
+```
+
+One campaign can therefore contain multiple planned or generated content items.
+
+The table currently uses:
+
+```sql
+CREATE TABLE social_producer.content_items
+(
+    content_id UInt64,
+    campaign_id UInt64,
+    platform LowCardinality(String),
+    content_type LowCardinality(String),
+    topic String,
+    content_text String,
+    status LowCardinality(String),
+    scheduled_at Nullable(DateTime),
+    created_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (campaign_id, platform, content_id);
+```
+
+The sorting key begins with `campaign_id` because content will frequently be retrieved and analysed in the context of a campaign.
+
+`platform`, `content_type`, and `status` use `LowCardinality(String)` because these fields are expected to repeatedly use a relatively small set of values.
+
+`schedule_at` is represented by `Nullable(DateTime)` so unscheduled content can exist without requiring an artificial scheduling date.
+
+---
+
+## Content Data Access
+
+The Python ClickHouse data layer now includes:
+
+```text
+get_next_content_id()
+create_content_item()
+get_content_items()
+```
+
+These functions extend the existing campaign data layer.
+
+The current tested content data path is:
+
+```text
+Python
+ |
+ v
+database.py
+ |
+ v
+clickhouse-connect
+ |
+ v
+ClickHouse
+ |
+ v
+social_producer.content_items
+```
+
+Manual and Python-based tests have confirmed:
+
+```text
+[✓] Manual content insert into ClickHouse
+[✓] Manual content retrieval from ClickHouse
+[✓] Python content retrieval
+[✓] Python next-content-ID generation
+[✓] Python content insertion
+```
+
+Content records have successfully been associated with Campaign 2 using `campaign_id`.
+
+---
+
+## Content Planning Agent
+
+The first specialist agent is implemented in:
+
+```text
+social_producer/content_planner.py
+```
+
+The agent can access campaign and existing-content information through read-only tools.
+
+Its current data flow is:
+
+```text
+Content Planning Agent
+        |
+        +------------------------+
+        |                        |
+        v                        v
+get_campaign_by_id()    list_campaign_content()
+        |                        |
+        +-----------+------------+
+                    |
+                    v
+                ClickHouse
+```
+
+The agent currently does not have access to `create_content_item()`.
+
+This is intentional.
+
+The Content Planning Agent was first tested as a read-only agent before being given any capability that changes application state.
+
+---
+
+## Standalone Content Planner Test
+
+Before integrating the planner with the root producer, it was tested independently.
+
+The test request asked the agent to create a content plan for Campaign 2.
+
+The agent successfully:
+
+* retrieved Campaign 2;
+* identified the campaign objective;
+* identified the target audience;
+* identified Facebook and LinkedIn as campaign platforms;
+* recognised the seven-day campaign duration;
+* retrieved existing content items;
+* recognised that educational content already existed;
+* avoided simply repeating the same content strategy; and
+* produced a structured multi-day content plan.
+
+The test confirmed that the planner could reason using application data stored in ClickHouse.
+
+---
+
+## First Multi-Agent Delegation
+
+After the standalone test succeeded, `content_planner` was registered as a sub-agent of the root `social_media_producer`.
+
+A content-planning request was then submitted to the root agent:
+
+```text
+Create a content plan for campaign 2.
+```
+
+The request was successfully handled through the multi-agent workflow.
+
+The resulting architecture is:
+
+```text
+User
+ |
+ v
+Social Media Producer
+ |
+ | delegation
+ v
+Content Planning Agent
+ |
+ +------------------+
+ |                  |
+ v                  v
+Campaign        Existing Content
+ |                  |
+ +---------+--------+
+           |
+           v
+       ClickHouse
+           |
+           v
+      Content Plan
+```
+
+This proves the project's first working specialist-agent delegation path.
+
+The project is therefore no longer only a single LLM agent with application tools.
+
+It now contains an orchestrator and a specialised agent with a defined responsibility.
+
+---
+
+## Grounding Lesson
+
+Testing the Content Planning Agent revealed an important issue.
+
+Although the planner correctly used campaign information, some proposed ideas relied on business information that had not been supplied.
+
+Examples included concepts involving:
+
+* learner testimonials;
+* specific courses;
+* enrolment deadlines;
+* training schedules; and
+* other business claims.
+
+These were not established by the available campaign data.
+
+The planner instructions are therefore being strengthened with factual-grounding rules.
+
+The Content Planning Agent must not invent brand or campaign facts.
+
+If a potentially useful content idea requires unavailable information, the agent should identify it as:
+
+```text
+REQUIRES BRAND INFORMATION
+```
+
+rather than presenting hypothetical information as fact.
+
+This distinction will also influence the future Review Agent, which will be responsible for detecting unsupported claims before content can be approved.
+
+---
+
+## Current Agent Status
+
+Implemented:
+
+```text
+Social Media Producer / Orchestrator    [✓]
+        |
+        +--- Content Planning Agent     [✓]
+```
+
+Planned:
+
+```text
+Social Media Producer / Orchestrator
+        |
+        +--- Strategy Agent             [ ]
+        |
+        +--- Content Planning Agent     [✓]
+        |
+        +--- Content Generation Agent   [ ]
+        |
+        +--- Review Agent               [ ]
+        |
+        +--- Analytics Agent            [ ]
+        |
+        +--- Optimisation Agent         [ ]
+```
+
+Agents will be introduced incrementally as their corresponding data models and workflows are implemented and tested.
+
+---
+
+## Current Data Architecture
+
+The implemented ClickHouse data model is now:
+
+```text
+campaigns
+    |
+    | 1:N
+    v
+content_items
+```
+
+Future event-oriented data will extend this with:
+
+```text
+campaigns
+    |
+    v
+content_items
+    |
+    v
+engagement_events     [planned]
+
+agent_events           [planned]
+```
+
+The high-volume engagement and agent-event datasets will later provide the foundation for deeper ClickHouse analytics.
+
+---
+
+## Development Milestone
+
+The project has now demonstrated:
+
+```text
+Gemini                               [✓]
+Google ADK                           [✓]
+ClickHouse persistent storage        [✓]
+Campaign read path                   [✓]
+Campaign write path                  [✓]
+Human-in-the-loop campaign approval  [✓]
+Content storage model                [✓]
+Python content read/write            [✓]
+Specialist Content Planning Agent    [✓]
+Multi-agent delegation               [✓]
+Grounded-planning rules              [in progress]
+```
+
+The next development objective is to complete the grounding test and then design a controlled workflow for converting an approved content plan into persistent `content_items`.
+
+The Content Planning Agent will not be given unrestricted write access without first defining the approval boundary for this action.
