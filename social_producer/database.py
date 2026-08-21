@@ -163,12 +163,17 @@ def create_content_item(
     platform,
     content_type,
     topic,
-    content_text,
-    status="draft",
+    content_text="",
+    status="planned",
     scheduled_at=None,
+    campaign_day=None,
+    content_purpose="",
 ):
     """
     Insert a content item into ClickHouse.
+
+    Planned content can exist before final social-media copy
+    has been generated.
 
     Each content item belongs to a campaign through campaign_id.
     """
@@ -182,6 +187,8 @@ def create_content_item(
                 platform,
                 content_type,
                 topic,
+                campaign_day,
+                content_purpose,
                 content_text,
                 status,
                 scheduled_at,
@@ -193,6 +200,8 @@ def create_content_item(
             "platform",
             "content_type",
             "topic",
+            "campaign_day",
+            "content_purpose",
             "content_text",
             "status",
             "scheduled_at",
@@ -221,6 +230,8 @@ def get_content_items(campaign_id=None):
                 platform,
                 content_type,
                 topic,
+                campaign_day,
+                content_purpose,
                 content_text,
                 status,
                 scheduled_at,
@@ -240,6 +251,8 @@ def get_content_items(campaign_id=None):
                 platform,
                 content_type,
                 topic,
+                campaign_day,
+                content_purpose,
                 content_text,
                 status,
                 scheduled_at,
@@ -258,10 +271,12 @@ def get_content_items(campaign_id=None):
                 "platform": row[2],
                 "content_type": row[3],
                 "topic": row[4],
-                "content_text": row[5],
-                "status": row[6],
-                "scheduled_at": row[7],
-                "created_at": row[8],
+                "campaign_day": row[5],
+                "content_purpose": row[6],
+                "content_text": row[7],
+                "status": row[8],
+                "scheduled_at": row[9],
+                "created_at": row[10],
             }
         )
 

@@ -3,8 +3,10 @@ from .content_planner import content_planner
 
 from .database import (
     create_campaign_record,
+    create_content_item,
     get_campaigns,
     get_next_campaign_id,
+    get_next_content_id,
 )
 
 
@@ -86,6 +88,49 @@ def list_campaigns() -> dict:
         "campaigns": campaigns,
     }
 
+def save_content_plan(
+    campaign_id: int,
+    platform: str,
+    content_type: str,
+    topic: str,
+    campaign_day: int,
+    content_purpose: str,
+) -> dict:
+    """
+    Save one approved planned content item to ClickHouse.
+
+    This tool must only be called after explicit user approval.
+
+    It stores planning metadata only. Final social-media copy is not
+    generated here.
+    """
+
+    content_id = get_next_content_id()
+
+    create_content_item(
+        content_id=content_id,
+        campaign_id=campaign_id,
+        platform=platform,
+        content_type=content_type,
+        topic=topic,
+        campaign_day=campaign_day,
+        content_purpose=content_purpose,
+        content_text="",
+        status="planned",
+    )
+
+    return {
+        "content_id": content_id,
+        "campaign_id": campaign_id,
+        "platform": platform,
+        "content_type": content_type,
+        "topic": topic,
+        "campaign_day": campaign_day,
+        "content_purpose": content_purpose,
+        "status": "planned",
+        "saved": True,
+    }
+
 
 root_agent = Agent(
     model="gemini-3.5-flash",
@@ -148,13 +193,32 @@ Do not claim that posts have been published or scheduled.
 
 When reporting information retrieved from tools, base your response on the
 actual tool result rather than assuming additional actions have occurred.
+
+CONTENT PLAN APPROVAL RULES:
+
+When the Content Planning Agent proposes content:
+
+- present the proposed plan to the user;
+- do not save planned content automatically;
+- require explicit user approval before calling save_content_plan;
+- do not interpret silence or general interest as approval;
+- only save items the user has approved;
+- save approved items with status "planned";
+- planned items must have an empty content_text field;
+- never claim that planned content was generated, scheduled, or published.
+
+If the user approves the full plan, save each approved item individually using
+save_content_plan.
+
+If the user approves only specific items, save only those items.
 """,
 
     tools=[
-        get_brand_details,
-        create_campaign,
-        list_campaigns,
-    ],
+    get_brand_details,
+    create_campaign,
+    list_campaigns,
+    save_content_plan,
+],
     sub_agents=[
     content_planner,
 ],

@@ -1594,3 +1594,444 @@ Grounded-planning rules              [in progress]
 The next development objective is to complete the grounding test and then design a controlled workflow for converting an approved content plan into persistent `content_items`.
 
 The Content Planning Agent will not be given unrestricted write access without first defining the approval boundary for this action.
+
+## Approved Content Plan Persistence
+
+The content-planning workflow now includes a human approval boundary before planned content is written to ClickHouse.
+
+The implemented flow is:
+
+```text
+User
+ |
+ v
+Social Media Producer / Orchestrator
+ |
+ v
+Content Planning Agent
+ |
+ v
+Grounded Content Plan
+ |
+ v
+Human Review
+ |
+ v
+Explicit Approval
+ |
+ v
+save_content_plan()
+ |
+ v
+create_content_item()
+ |
+ v
+ClickHouse
+ |
+ v
+status = planned
+```
+
+The Content Planning Agent does not directly persist its own recommendations.
+
+Instead, the root `social_media_producer` controls the write operation after explicit user approval.
+
+This preserves the same human-in-the-loop principle already used for campaign creation.
+
+---
+
+## Content Planning Schema Evolution
+
+Testing the Content Planning Agent revealed that the initial `content_items` schema did not preserve all of the information produced by the planner.
+
+The planner produces information such as:
+
+```text
+platform
+content_type
+topic
+suggested campaign day
+content purpose
+```
+
+The original table did not contain dedicated fields for:
+
+```text
+campaign_day
+content_purpose
+```
+
+The schema was therefore evolved by adding:
+
+```sql
+campaign_day Nullable(UInt16)
+```
+
+and:
+
+```sql
+content_purpose String DEFAULT ''
+```
+
+The current content structure includes:
+
+```text
+content_id
+campaign_id
+platform
+content_type
+topic
+campaign_day
+content_purpose
+content_text
+status
+scheduled_at
+created_at
+```
+
+This allows planning metadata to be persisted before final social-media copy is generated.
+
+---
+
+## Planned Content Lifecycle
+
+The project now distinguishes between content planning and content generation.
+
+A newly approved planned item is stored with:
+
+```text
+status = planned
+content_text = ""
+```
+
+The intended lifecycle is:
+
+```text
+planned
+   |
+   v
+Content Generation
+   |
+   v
+draft
+   |
+   v
+Review
+   |
+   v
+approved
+   |
+   v
+scheduled
+   |
+   v
+published
+```
+
+Only the `planned` stage is currently implemented as part of this workflow.
+
+Generation, review, approval, scheduling and publishing remain future stages.
+
+---
+
+## Why Planned Content Has Empty Copy
+
+The Content Planning Agent is responsible for deciding **what content should be created**.
+
+It is not responsible for producing final social-media copy.
+
+For this reason, a planned item can exist with:
+
+```text
+content_text = ""
+```
+
+The future Content Generation Agent will be responsible for filling this field.
+
+This keeps agent responsibilities separated:
+
+```text
+Content Planning Agent
+        |
+        v
+Decides WHAT should be produced
+        |
+        v
+Human approval
+        |
+        v
+Planned content stored in ClickHouse
+        |
+        v
+Content Generation Agent
+        |
+        v
+Writes the actual content
+```
+
+---
+
+## Approval-Controlled Write Tool
+
+The root producer now has a controlled content-plan persistence tool.
+
+The tool:
+
+```text
+save_content_plan()
+```
+
+creates one approved planned content item.
+
+Internally, it calls:
+
+```text
+create_content_item()
+```
+
+with:
+
+```text
+status = planned
+content_text = ""
+```
+
+The tool must only be called after explicit user approval.
+
+The root agent is instructed to:
+
+* present the proposed content plan first;
+* wait for explicit user approval;
+* save only approved items;
+* avoid interpreting silence as approval;
+* preserve `planned` status;
+* keep final copy empty at this stage; and
+* never claim that content was generated, scheduled or published.
+
+---
+
+## Selective Approval
+
+The approval workflow supports selective approval.
+
+The user does not have to approve the full proposed content plan.
+
+For example:
+
+```text
+Approve and save only the Day 3 LinkedIn awareness item.
+```
+
+should result in only that item being written to ClickHouse.
+
+Other proposed items must remain unsaved.
+
+This behaviour was successfully tested.
+
+---
+
+## Grounded Planning Test
+
+Before persistence was enabled, the Content Planning Agent was strengthened with grounding rules.
+
+If an idea depends on unavailable business information, the planner must mark it as:
+
+```text
+REQUIRES BRAND INFORMATION
+```
+
+instead of inventing facts.
+
+Examples of information that must not be invented include:
+
+* testimonials;
+* customer success stories;
+* exact courses;
+* pricing;
+* enrolment deadlines;
+* schedules;
+* statistics;
+* certifications;
+* partnerships; and
+* business claims not supported by available data.
+
+After updating the grounding instructions, the planner successfully produced a content plan that distinguished between:
+
+```text
+Known campaign information
+```
+
+and:
+
+```text
+Ideas requiring additional brand information
+```
+
+---
+
+## Successful Approved Content Test
+
+Campaign 2 was used to test the complete workflow.
+
+The planner proposed several content ideas.
+
+The user approved only the Day 3 LinkedIn awareness item.
+
+The approved item contained:
+
+```text
+Campaign ID:      2
+Platform:         LinkedIn
+Campaign Day:     3
+Content Type:     awareness
+Topic:            The growing demand for IT professionals in South Africa
+Content Purpose:  Highlight the industry demand and employment landscape for tech learners.
+```
+
+The system saved only this approved item.
+
+ClickHouse assigned:
+
+```text
+Content ID: 5
+```
+
+The persisted record was independently verified from Python.
+
+The stored state was:
+
+```text
+content_id:       5
+campaign_id:      2
+platform:         LinkedIn
+content_type:     awareness
+campaign_day:     3
+content_text:     ""
+status:           planned
+scheduled_at:     None
+```
+
+No other proposed content items were saved.
+
+---
+
+## Proven End-to-End Workflow
+
+The project has now demonstrated:
+
+```text
+User
+ |
+ v
+Social Media Producer / Orchestrator
+ |
+ v
+Content Planning Agent
+ |
+ v
+Campaign + Existing Content
+ |
+ v
+ClickHouse
+ |
+ v
+Grounded Content Plan
+ |
+ v
+Human Approval
+ |
+ v
+save_content_plan()
+ |
+ v
+create_content_item()
+ |
+ v
+ClickHouse
+ |
+ v
+Planned Content
+```
+
+This is the first fully tested workflow combining:
+
+```text
+[✓] Multi-agent delegation
+[✓] ClickHouse reads
+[✓] Agent reasoning
+[✓] Grounded planning
+[✓] Human approval
+[✓] Selective approval
+[✓] Controlled tool execution
+[✓] ClickHouse writes
+[✓] Independent database verification
+```
+
+---
+
+## Current Agent Responsibilities
+
+```text
+Social Media Producer / Orchestrator
+    |
+    +--- Campaign workflow
+    |
+    +--- Human approval control
+    |
+    +--- Content-plan persistence
+    |
+    +--- Content Planning Agent
+```
+
+The next planned specialist is:
+
+```text
+Content Generation Agent
+```
+
+Its responsibility will be to convert approved planned content into actual platform-specific social-media copy.
+
+It will not be responsible for final approval or publishing.
+
+---
+
+## Next Development Milestone
+
+The next milestone is:
+
+```text
+Planned Content
+      |
+      v
+Content Generation Agent
+      |
+      v
+Generated Copy
+      |
+      v
+status = draft
+      |
+      v
+Future Review Agent
+```
+
+The Content Generation Agent will be introduced incrementally using the same development approach:
+
+```text
+Build
+ |
+ v
+Test
+ |
+ v
+Verify
+ |
+ v
+Document
+ |
+ v
+Commit
+ |
+ v
+Proceed
+```
