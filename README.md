@@ -1,3 +1,648 @@
+# AI Social Media Producer
+
+An agentic social-media campaign production system built with **Google Gemini**, **Google Agent Development Kit (ADK)**, **Python**, and **ClickHouse**.
+
+The project is being developed for the **Google Cloud / Gemini Agentic Cinema Hackathon**.
+
+AI Social Media Producer treats social-media campaign production as an intelligent media workflow. Instead of using a single chatbot to perform every task, the system is being developed as a team of specialised AI agents coordinated by a central Social Media Producer.
+
+ClickHouse serves as the project's persistent data and analytics platform.
+
+---
+
+## Project Goals
+
+The system is being designed to eventually support:
+
+- brand and campaign understanding;
+- campaign strategy;
+- social-media content planning;
+- AI-assisted content generation;
+- human approval workflows;
+- campaign and content storage;
+- engagement-event ingestion;
+- campaign analytics;
+- agent activity analysis;
+- campaign optimisation;
+- multi-agent orchestration; and
+- ClickHouse MCP integration.
+
+The project is being built incrementally.
+
+Features described as planned are not considered implemented until they have been built and tested.
+
+---
+
+## Current Implementation
+
+The current working implementation includes:
+
+- a Google ADK root agent called `social_media_producer`;
+- Gemini integration;
+- ClickHouse persistent campaign storage;
+- human approval before campaign creation;
+- campaign read and write tools;
+- a `campaigns` ClickHouse table;
+- a `content_items` ClickHouse table;
+- Python-to-ClickHouse campaign and content operations;
+- a specialist `content_planner` agent;
+- root-agent to specialist-agent delegation; and
+- persistent ClickHouse storage using a Docker volume.
+
+The current multi-agent implementation is:
+
+```text
+User
+ |
+ v
+Social Media Producer
+     Orchestrator
+ |
+ | delegates content-planning work
+ v
+Content Planning Agent
+ |
+ +-----------------------+
+ |                       |
+ v                       v
+Campaign Data       Existing Content
+ |                       |
+ +-----------+-----------+
+             |
+             v
+         ClickHouse
+```
+
+Additional specialist agents will be introduced incrementally.
+
+---
+
+## Planned Agent Architecture
+
+The target architecture is:
+
+```text
+                         User
+                          |
+                          v
+                Social Media Producer
+                    / Orchestrator
+                          |
+          +---------------+---------------+
+          |               |               |
+          v               v               v
+      Strategy         Content         Analytics
+       Agent           Planning          Agent
+                        Agent              |
+                          |                v
+                          |          Optimisation
+                          |              Agent
+                          v
+                    Generation Agent
+                          |
+                          v
+                     Review Agent
+                          |
+                          v
+                      ClickHouse
+```
+
+Currently implemented:
+
+```text
+Social Media Producer / Orchestrator    [✓]
+    |
+    +--- Content Planning Agent         [✓]
+
+Strategy Agent                          [ ]
+Content Generation Agent                [ ]
+Review Agent                            [ ]
+Analytics Agent                         [ ]
+Optimisation Agent                      [ ]
+```
+
+---
+
+# Local Development Setup
+
+## Prerequisites
+
+The development environment requires:
+
+- Python 3
+- Git
+- Docker
+- Google Gemini API access
+- Google Agent Development Kit (ADK)
+
+ClickHouse currently runs locally using Docker.
+
+---
+
+## 1. Clone the Repository
+
+Using SSH:
+
+```bash
+git clone git@github.com:geraldrush/social-director.git
+cd social-director
+```
+
+---
+
+## 2. Create the Python Virtual Environment
+
+Create the virtual environment:
+
+```bash
+python3 -m venv .venv
+```
+
+Activate it:
+
+```bash
+source .venv/bin/activate
+```
+
+Install the project dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+The `.venv` directory must not be committed to Git.
+
+---
+
+## 3. Create the Environment File
+
+Application credentials and configuration are stored outside the source code.
+
+Create:
+
+```text
+social_producer/.env
+```
+
+A development configuration requires values for:
+
+```dotenv
+GOOGLE_API_KEY=your_google_api_key
+
+CLICKHOUSE_HOST=localhost
+CLICKHOUSE_PORT=8123
+CLICKHOUSE_USER=social_producer
+CLICKHOUSE_PASSWORD=your_clickhouse_password
+CLICKHOUSE_DATABASE=social_producer
+```
+
+Do **not** commit `.env`.
+
+The repository should contain an `.env.example` containing only safe placeholders.
+
+The application explicitly loads the environment file from the `social_producer` directory.
+
+---
+
+# ClickHouse Local Setup
+
+## 4. Create Persistent ClickHouse Storage
+
+Create a Docker volume:
+
+```bash
+docker volume create clickhouse-data
+```
+
+The volume is used to preserve ClickHouse data when the container is replaced.
+
+It is mounted inside the container at:
+
+```text
+/var/lib/clickhouse
+```
+
+---
+
+## 5. Start ClickHouse
+
+Create the local ClickHouse container:
+
+```bash
+docker run -d \
+  --name clickhouse-server \
+  --restart unless-stopped \
+  -p 8123:8123 \
+  -p 9000:9000 \
+  -v clickhouse-data:/var/lib/clickhouse \
+  -e CLICKHOUSE_USER=social_producer \
+  -e CLICKHOUSE_PASSWORD="your_clickhouse_password" \
+  clickhouse/clickhouse-server:latest
+```
+
+Replace:
+
+```text
+your_clickhouse_password
+```
+
+with your local development password.
+
+Never commit the real password to Git.
+
+---
+
+## 6. Verify the Container
+
+Check that ClickHouse is running:
+
+```bash
+docker ps
+```
+
+If ClickHouse does not appear ready, inspect the logs:
+
+```bash
+docker logs clickhouse-server
+```
+
+A Docker container showing as `Up` does not necessarily mean that the service inside it is ready to accept connections.
+
+---
+
+## 7. ClickHouse Ports
+
+The local environment exposes:
+
+```text
+8123    HTTP interface
+9000    Native ClickHouse protocol
+```
+
+The Python application currently connects through:
+
+```text
+8123
+```
+
+using `clickhouse-connect`.
+
+The ClickHouse command-line client normally communicates through:
+
+```text
+9000
+```
+
+---
+
+## 8. Open the ClickHouse Client
+
+Run:
+
+```bash
+docker exec -it clickhouse-server \
+  clickhouse-client \
+  --user social_producer \
+  --password
+```
+
+Enter the password configured when the container was created.
+
+---
+
+## 9. Create the Application Database
+
+Inside ClickHouse:
+
+```sql
+CREATE DATABASE IF NOT EXISTS social_producer;
+```
+
+Then select it:
+
+```sql
+USE social_producer;
+```
+
+---
+
+# Database Schema
+
+## Campaigns
+
+Create the campaign table:
+
+```sql
+CREATE TABLE IF NOT EXISTS social_producer.campaigns
+(
+    campaign_id UInt64,
+    brand_name String,
+    objective String,
+    target_audience String,
+    platforms Array(String),
+    duration_days UInt16,
+    status LowCardinality(String),
+    created_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (brand_name, campaign_id);
+```
+
+The sorting key is:
+
+```sql
+ORDER BY (brand_name, campaign_id)
+```
+
+In ClickHouse this is not simply presentation ordering. It influences how the `MergeTree` table physically organises data for analytical access.
+
+---
+
+## Content Items
+
+Create the content table:
+
+```sql
+CREATE TABLE IF NOT EXISTS social_producer.content_items
+(
+    content_id UInt64,
+    campaign_id UInt64,
+    platform LowCardinality(String),
+    content_type LowCardinality(String),
+    topic String,
+    content_text String,
+    status LowCardinality(String),
+    scheduled_at Nullable(DateTime),
+    created_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (campaign_id, platform, content_id);
+```
+
+The current relationship is:
+
+```text
+campaigns
+    |
+    | 1:N
+    v
+content_items
+```
+
+A campaign can therefore contain multiple content items.
+
+---
+
+## 10. Verify the Database
+
+Inside the ClickHouse client:
+
+```sql
+USE social_producer;
+
+SHOW TABLES;
+```
+
+The current implementation should contain:
+
+```text
+campaigns
+content_items
+```
+
+Inspect either table with:
+
+```sql
+DESCRIBE TABLE campaigns;
+```
+
+or:
+
+```sql
+DESCRIBE TABLE content_items;
+```
+
+---
+
+# Test the Python Connection
+
+With the virtual environment active:
+
+```bash
+python -c "from social_producer.database import test_connection; print(test_connection())"
+```
+
+A successful response should return the running ClickHouse server version.
+
+---
+
+## Test Campaign Retrieval
+
+```bash
+python -c "from social_producer.database import get_campaigns; print(get_campaigns())"
+```
+
+---
+
+## Test Content Retrieval
+
+```bash
+python -c "from social_producer.database import get_content_items; print(get_content_items())"
+```
+
+---
+
+# Run the Agent Locally
+
+With the Python environment activated:
+
+```bash
+adk web
+```
+
+Open the ADK development interface and select:
+
+```text
+social_producer
+```
+
+The ADK Web interface is currently used for local development and testing.
+
+---
+
+# Project Structure
+
+The project currently has approximately the following structure:
+
+```text
+social-director/
+|
+├── README.md
+├── requirements.txt
+├── .gitignore
+|
+├── .venv/                         # local only / ignored
+|
+└── social_producer/
+    ├── __init__.py
+    ├── agent.py
+    ├── content_planner.py
+    ├── database.py
+    ├── .env                       # local only / ignored
+    └── .gitignore
+```
+
+As additional specialist agents are introduced, the structure will evolve.
+
+---
+
+# Current Data Architecture
+
+Implemented:
+
+```text
+campaigns
+    |
+    | 1:N
+    v
+content_items
+```
+
+Planned:
+
+```text
+campaigns
+    |
+    v
+content_items
+    |
+    | 1:N
+    v
+engagement_events
+
+agent_events
+```
+
+`engagement_events` and `agent_events` have **not yet been implemented**.
+
+They are intended to become the event-oriented foundation for deeper ClickHouse analytics.
+
+---
+
+# Security
+
+The following must never be committed:
+
+```text
+.env
+.venv/
+API keys
+ClickHouse passwords
+Google Cloud credentials
+service-account credentials
+```
+
+Secrets should be supplied through environment configuration during local development and through an appropriate secret-management system when the application is deployed.
+
+Before committing changes, verify ignored files with:
+
+```bash
+git status
+git check-ignore -v social_producer/.env
+```
+
+---
+
+# Development Approach
+
+The project follows an incremental development process:
+
+```text
+Build one meaningful component
+        |
+        v
+Test it
+        |
+        v
+Understand the result
+        |
+        v
+Fix problems
+        |
+        v
+Document lessons learned
+        |
+        v
+Commit
+        |
+        v
+Proceed
+```
+
+This is intentional.
+
+The hackathon submission should demonstrate working functionality and technical understanding rather than presenting planned functionality as though it has already been implemented.
+
+---
+
+# Current Milestone
+
+Completed:
+
+```text
+[✓] Google ADK root agent
+[✓] Gemini integration
+[✓] Human-in-the-loop campaign creation
+[✓] Local ClickHouse environment
+[✓] Persistent ClickHouse Docker volume
+[✓] campaigns MergeTree table
+[✓] content_items MergeTree table
+[✓] Python-to-ClickHouse connection
+[✓] Campaign read/write path
+[✓] Content read/write path
+[✓] Content Planning Agent
+[✓] Root-agent to specialist-agent delegation
+```
+
+In progress:
+
+```text
+[~] Content-planning factual grounding
+```
+
+Next:
+
+```text
+[ ] Approved content-plan persistence
+[ ] Content Generation Agent
+[ ] Review Agent
+[ ] Engagement event ingestion
+[ ] Agent event logging
+[ ] ClickHouse analytics
+[ ] Materialized views where justified
+[ ] Analytics Agent
+[ ] Optimisation Agent
+[ ] ClickHouse MCP integration
+[ ] Google Cloud deployment
+```
+
+---
+
+# Current Limitations
+
+The current implementation does **not** yet:
+
+- publish content to social-media platforms;
+- schedule social-media posts;
+- ingest real engagement events;
+- generate final production-ready social-media content through a dedicated generation agent;
+- perform automated campaign optimisation;
+- provide production Google Cloud deployment;
+- use ClickHouse MCP; or
+- provide the complete planned multi-agent architecture.
+
+These capabilities remain part of the development roadmap.
+
 ## Current Architecture
 
 The project currently uses:
