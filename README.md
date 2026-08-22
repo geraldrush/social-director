@@ -3541,3 +3541,820 @@ suggested changes / example rewrites.
 ```
 
 The next major development direction is the transition from the generic AI Social Media Producer test scenario toward **Premiere — AI Studio Producer**, using the existing multi-agent foundation for independent film release campaigns.
+
+# Premiere — AI Studio Producer Pivot
+
+## Why the Project Is Evolving
+
+The project originally began as an **AI Social Media Producer** and used BePlugged Tech campaigns as the initial development and testing scenario.
+
+That implementation successfully established the core multi-agent architecture:
+
+```text
+Root Orchestrator
+        |
+        +-- Content Planning Agent
+        |
+        +-- Content Generation Agent
+        |
+        +-- Review Agent
+```
+
+It also established important engineering boundaries including:
+
+* explicit human approval before persistent state changes;
+* specialist-agent responsibility separation;
+* grounded content generation;
+* guarded database retrieval;
+* read-only content review;
+* ClickHouse persistence;
+* independent database verification.
+
+The project is now evolving into:
+
+> **Premiere — AI Studio Producer**
+
+Premiere applies the existing multi-agent architecture to **independent film release campaigns**.
+
+Rather than rebuilding the system, the film-studio workflow is being introduced incrementally and tested against the existing architecture.
+
+---
+
+# Premiere Product Direction
+
+Premiere is being designed as a multi-agent AI studio producer for independent filmmakers and film studios.
+
+The intended workflow is:
+
+```text
+Independent Film Studio
+        ↓
+Film / Release Brief
+        ↓
+Director Agent
+        ↓
+Content Planning
+        ↓
+Content Generation
+        ↓
+Content Review
+        ↓
+Human Approval
+        ↓
+Publishing Workflow
+        ↓
+Audience Engagement Events
+        ↓
+ClickHouse Analytics
+        ↓
+Analytics Agent
+        ↓
+Optimisation Agent
+```
+
+Only the portions explicitly documented as implemented should be considered current functionality.
+
+Publishing, engagement ingestion, analytics, optimisation, and the complete production architecture remain future milestones unless otherwise documented.
+
+---
+
+# Development Film Scenario
+
+A fictional independent film and studio were introduced as controlled development data.
+
+## Studio
+
+```text
+Ubuntu Frame Studios
+```
+
+Industry:
+
+```text
+Independent film production
+```
+
+Target audience:
+
+```text
+African film audiences aged 18 to 35
+```
+
+Studio tone:
+
+```text
+Cinematic, intriguing, authentic and audience-focused
+```
+
+## Film
+
+```text
+Shadows of Pretoria
+```
+
+Verified development facts:
+
+```text
+Title:
+Shadows of Pretoria
+
+Genre:
+Crime drama
+
+Premiere:
+20 October 2026
+
+Primary market:
+South Africa
+
+Target audience:
+African film audiences aged 18 to 35
+
+Release campaign platforms:
+Instagram
+TikTok
+Facebook
+YouTube
+```
+
+These are fictional development facts used to test grounding behaviour.
+
+The agents must not infer additional film information from these values.
+
+For example:
+
+```text
+Film title contains "Pretoria"
+        ≠
+Film is verified as being set in Pretoria
+```
+
+Similarly, no cast, characters, synopsis, filming locations, reviews, awards, trailer assets, behind-the-scenes material, ticket information, venue details, or distribution details should be assumed unless explicitly supplied.
+
+---
+
+# Film / Studio Grounding Rules
+
+The Director Agent was extended with film-specific grounding rules.
+
+When operating on film, studio, entertainment, or release-campaign information, the system must:
+
+* treat only retrieved studio information as verified facts;
+* avoid assuming promotional assets exist;
+* avoid inventing cast or character information;
+* avoid inventing plot information;
+* avoid inventing reviews or audience reactions;
+* avoid inventing awards;
+* avoid inventing quotes;
+* avoid inventing filming locations;
+* avoid inventing premiere venues;
+* avoid inventing distribution information;
+* avoid inventing ticket information;
+* distinguish recommendations from known facts.
+
+Campaign ideas may recommend content requiring additional studio material, but they must not represent that material as already available.
+
+The grounding rules were further strengthened to prevent inference of:
+
+* plot;
+* setting;
+* filming location;
+* characters;
+* themes;
+* story events;
+
+from a film title, genre, campaign topic, or other metadata.
+
+---
+
+# First Premiere Campaign
+
+The Director Agent was given the following film-release brief:
+
+```text
+Studio:
+Ubuntu Frame Studios
+
+Film:
+Shadows of Pretoria
+
+Objective:
+Build awareness and audience engagement leading up to the premiere.
+
+Target audience:
+African film audiences aged 18 to 35.
+
+Platforms:
+Instagram, TikTok, Facebook and YouTube.
+
+Duration:
+28 days
+
+Premiere:
+20 October 2026
+```
+
+The Director Agent retrieved the stored studio information and proposed a release campaign.
+
+It correctly stopped before persistence and requested explicit human approval.
+
+This demonstrated that the existing human-in-the-loop campaign creation boundary continued to operate in the film domain.
+
+---
+
+# Grounding Issue Discovered During Campaign Proposal
+
+The first film campaign proposal suggested content involving:
+
+* behind-the-scenes material;
+* character reveals;
+* plot-based intrigue;
+* Pretoria-based atmosphere.
+
+Some of these ideas depended on information or assets that had not been supplied.
+
+The Director Agent grounding rules were therefore strengthened.
+
+After the change, the Director Agent began explicitly distinguishing between:
+
+```text
+VERIFIED FILM INFORMATION
+```
+
+and:
+
+```text
+CONTENT IDEA REQUIRING STUDIO INFORMATION / ASSETS
+```
+
+This established an important Premiere design principle:
+
+```text
+A good campaign idea
+        ≠
+Evidence that the required material exists
+```
+
+---
+
+# Campaign 3 Created
+
+After human review and explicit approval, the first Premiere campaign was persisted to ClickHouse.
+
+Independent database verification confirmed:
+
+```text
+campaign_id = 3
+
+brand_name = Ubuntu Frame Studios
+
+objective =
+Build awareness and audience engagement leading up to the premiere.
+
+target_audience =
+African film audiences aged 18 to 35
+
+platforms =
+Instagram
+TikTok
+Facebook
+YouTube
+
+duration_days = 28
+
+status = draft
+```
+
+Only the verified campaign parameters were persisted.
+
+Conditional content ideas were not stored as verified film facts.
+
+---
+
+# Premiere Content Planning Test
+
+Campaign ID 3 was then delegated to the existing **Content Planning Agent**.
+
+The agent was instructed to plan the first seven campaign days while:
+
+* using only verified campaign/studio information;
+* avoiding invented film facts;
+* identifying ideas requiring unavailable studio information or assets;
+* stopping before persistence.
+
+The first planning attempt revealed additional grounding problems.
+
+In particular, the planner inferred that Pretoria was the film's setting based on the film title.
+
+Examples included concepts such as:
+
+```text
+Pretoria as a Character
+```
+
+and references to the film's supposed Pretoria setting.
+
+This information had never been verified.
+
+---
+
+# Content Planner Grounding Improvement
+
+Film-specific grounding rules were therefore added to the Content Planning Agent.
+
+The planner was instructed not to infer:
+
+* setting;
+* filming location;
+* plot;
+* characters;
+* themes;
+* cast;
+* crew;
+* production history;
+* reviews;
+* awards;
+* quotes;
+* audience reactions;
+* distribution method;
+* venue;
+* ticket information;
+* promotional assets;
+
+from film metadata.
+
+The planner was also instructed to:
+
+* distinguish verified information from missing information;
+* mark asset-dependent ideas clearly;
+* avoid constructing a content purpose around unsupported assumptions;
+* consider dependencies between campaign content items.
+
+The same Campaign 3 planning request was then repeated.
+
+The second plan demonstrated substantially improved grounding behaviour.
+
+It correctly identified several ideas as requiring studio information rather than assuming the required assets existed.
+
+---
+
+# Planning Lessons
+
+The Premiere planning tests established another important distinction:
+
+```text
+VERIFIED
+```
+
+is different from:
+
+```text
+REQUIRES STUDIO INFORMATION
+```
+
+and future workflow design may benefit from more expressive states such as:
+
+```text
+VERIFIED
+
+REQUIRES STUDIO INFORMATION
+
+REQUIRES STUDIO ASSET
+
+BLOCKED BY DEPENDENCY
+```
+
+These states have not yet been implemented as database state transitions.
+
+They are documented as a future design consideration.
+
+---
+
+# Selective Human Approval Test
+
+Rather than approving the complete seven-day plan, only one grounded item was approved.
+
+The approved item was:
+
+```text
+Campaign ID:
+3
+
+Platform:
+Instagram
+
+Content Type:
+engagement
+
+Topic:
+Interactive Q&A / Premiere Countdown Kickoff
+
+Campaign Day:
+5
+
+Content Purpose:
+Encourage audience interaction and build excitement
+leading up to the verified 20 October 2026 premiere.
+```
+
+The root orchestrator was explicitly instructed not to save Days 1, 2, 3, 4, 6, or 7.
+
+The approved item was persisted as:
+
+```text
+Content ID 7
+```
+
+---
+
+# Independent Planning-State Verification
+
+ClickHouse was queried independently after persistence.
+
+Campaign 3 contained exactly one content item:
+
+```text
+content_id = 7
+campaign_id = 3
+platform = Instagram
+content_type = engagement
+campaign_day = 5
+status = planned
+content_text = ""
+```
+
+No unapproved planning items were present.
+
+This demonstrated selective human approval:
+
+```text
+7 proposed ideas
+        ↓
+Human approves 1
+        ↓
+Root Orchestrator
+        ↓
+Only approved item persisted
+        ↓
+ClickHouse
+        ↓
+1 planned item
+```
+
+---
+
+# Premiere Content Generation Test
+
+Content ID 7 was then delegated to the existing **Content Generation Agent**.
+
+The Generation Agent was instructed to:
+
+* retrieve the exact content item;
+* use its campaign context;
+* generate Instagram-specific copy;
+* use only verified information;
+* avoid inventing film facts;
+* stop before persistence.
+
+The first draft correctly used the verified premiere date but contained slightly inaccurate wording describing the event as an:
+
+```text
+Ubuntu Frame Studios premiere
+```
+
+The verified fact was specifically:
+
+```text
+Shadows of Pretoria premieres on 20 October 2026.
+```
+
+The draft was therefore not immediately approved.
+
+---
+
+# Human-Guided Revision
+
+The human requested a targeted revision.
+
+The Generation Agent was instructed to:
+
+* preserve the existing concept;
+* correct the premiere wording;
+* introduce no new film facts;
+* stop before persistence.
+
+The revised copy was:
+
+```text
+The countdown is officially on! ⏳
+
+Shadows of Pretoria premieres on 20 October 2026.
+
+We want to hear from you: What are you most looking forward
+to as we count down to the release, and where are you tuning
+in from? Drop your thoughts in the comments below! 👇✨
+
+#ShadowsOfPretoria #UbuntuFrameStudios
+#PremiereCountdown #AfricanCinema #FilmCommunity
+```
+
+The human explicitly approved this exact revision.
+
+---
+
+# Planned → Draft Transition
+
+After explicit approval, the root orchestrator persisted the exact revised copy.
+
+Independent ClickHouse verification confirmed:
+
+```text
+content_id = 7
+campaign_id = 3
+platform = Instagram
+status = draft
+```
+
+The stored `content_text` matched the approved revision.
+
+The resulting state transition was:
+
+```text
+Content ID 7
+
+planned
+   ↓
+Generation Agent
+   ↓
+Generated Draft
+   ↓
+Human Revision Request
+   ↓
+Revised Draft
+   ↓
+Explicit Human Approval
+   ↓
+Root Orchestrator
+   ↓
+ClickHouse
+   ↓
+draft
+```
+
+---
+
+# First Premiere Review Test
+
+The persisted Content ID 7 draft was then delegated to the existing **Review Agent**.
+
+The Review Agent was instructed to retrieve the exact ClickHouse record and assess:
+
+* factual grounding;
+* campaign alignment;
+* content-purpose alignment;
+* studio/brand tone;
+* Instagram suitability.
+
+The Review Agent returned:
+
+```text
+Recommendation: PASS
+```
+
+Reason:
+
+```text
+The draft is factually accurate according to the verified
+campaign details, aligned with the content purpose of driving
+audience interaction, and appropriate for Instagram.
+```
+
+The Review Agent reported:
+
+```text
+Issues: None
+
+Suggested changes: None
+```
+
+---
+
+# Review State Verification
+
+After the `PASS` recommendation, Content ID 7 was independently retrieved from ClickHouse.
+
+It remained:
+
+```text
+status = draft
+```
+
+The approved `content_text` was unchanged.
+
+Therefore:
+
+```text
+Review Agent PASS
+        ≠
+Automatic Approval
+```
+
+The Review Agent remained read-only in the Premiere workflow.
+
+---
+
+# First Complete Premiere Multi-Agent Pipeline
+
+The following film-release workflow has now been demonstrated:
+
+```text
+Ubuntu Frame Studios
+        ↓
+Shadows of Pretoria
+        ↓
+Campaign Brief
+        ↓
+Director / Root Orchestrator
+        ↓
+Human Campaign Approval
+        ↓
+Campaign 3
+        ↓
+ClickHouse
+        ↓
+Content Planning Agent
+        ↓
+7-Day Plan Proposed
+        ↓
+Human Selective Approval
+        ↓
+Content ID 7
+status = planned
+        ↓
+Content Generation Agent
+        ↓
+Draft Generated
+        ↓
+Human Revision Request
+        ↓
+Draft Revised
+        ↓
+Explicit Human Approval
+        ↓
+Content ID 7
+status = draft
+        ↓
+Review Agent
+        ↓
+PASS
+        ↓
+Independent ClickHouse Verification
+        ↓
+Content ID 7 remains draft
+```
+
+This is the first complete demonstration that the existing multi-agent architecture can operate on an independent-film release workflow rather than only the original generic business-marketing scenario.
+
+---
+
+# Premiere Milestone Status
+
+The following has now been demonstrated:
+
+```text
+[✓] Fictional studio development context created
+[✓] Fictional film development context created
+[✓] Verified film facts explicitly defined
+[✓] Film/studio grounding rules introduced
+[✓] Director Agent grounding tested
+[✓] Unsupported setting inference discovered
+[✓] Director grounding rules strengthened
+[✓] First film-release campaign proposed
+[✓] Human campaign approval enforced
+[✓] Campaign 3 persisted to ClickHouse
+[✓] Film-release Content Planning Agent test
+[✓] Planner grounding weaknesses discovered
+[✓] Film-specific planner rules introduced
+[✓] Improved planning behaviour demonstrated
+[✓] Selective plan approval demonstrated
+[✓] Only approved content persisted
+[✓] Content ID 7 created as planned
+[✓] Content Generation Agent used in film workflow
+[✓] Human-guided content revision demonstrated
+[✓] Exact approved copy persisted
+[✓] planned → draft transition verified
+[✓] Review Agent used in film workflow
+[✓] Review Agent returned PASS
+[✓] Review Agent remained read-only
+[✓] Content remained draft after PASS
+[✓] First complete Premiere specialist pipeline demonstrated
+```
+
+---
+
+# Known Improvements
+
+The Premiere testing process has revealed several improvements that should be addressed incrementally.
+
+## 1. Review Suggested-Rewrite Grounding
+
+The earlier Review Agent negative test demonstrated that a correct `BLOCKED` classification can still be followed by a suggested rewrite containing a weaker unsupported claim.
+
+Grounding rules should therefore explicitly apply to:
+
+```text
+Original content
++
+Review reasoning
++
+Suggested revisions
+```
+
+## 2. More Expressive Content Dependencies
+
+Film-release planning may eventually distinguish between:
+
+```text
+VERIFIED
+REQUIRES STUDIO INFORMATION
+REQUIRES STUDIO ASSET
+BLOCKED BY DEPENDENCY
+```
+
+This has not yet been implemented.
+
+## 3. Campaign Timing
+
+The campaign currently stores `duration_days`, but the workflow does not yet have a complete release-campaign scheduling model.
+
+Exact countdown calculations should not be inferred without sufficient scheduling information.
+
+## 4. Film Domain Model
+
+The current campaign structure successfully supports the initial Premiere test.
+
+A dedicated film-domain model may later include information such as:
+
+```text
+films
+release information
+approved studio facts
+approved promotional assets
+rating / audience constraints
+```
+
+The schema should only be expanded when required by tested functionality.
+
+---
+
+# Next Technical Milestones
+
+The immediate technical direction after the first successful Premiere pipeline is:
+
+```text
+Completed Premiere Pipeline
+        ↓
+Strengthen Review Agent rewrite grounding
+        ↓
+Official ClickHouse MCP Integration
+        ↓
+Prove Runtime MCP Query
+        ↓
+Agent Execution Observability
+        ↓
+agent_events
+        ↓
+Audience Engagement Event Model
+        ↓
+engagement_events
+        ↓
+ClickHouse Materialized Views
+        ↓
+Analytics Agent
+        ↓
+Optimisation Agent
+        ↓
+Google Cloud Production Deployment
+```
+
+The project will continue following the same development discipline:
+
+```text
+Build
+  ↓
+Test
+  ↓
+Find Boundary Failures
+  ↓
+Improve
+  ↓
+Retest
+  ↓
+Verify ClickHouse State
+  ↓
+Document
+  ↓
+Commit
+```
+
+The project should not claim future functionality as implemented until it has been tested and independently verified.

@@ -18,18 +18,48 @@ def get_brand_details(brand_name: str) -> dict:
     """Get stored information about a brand."""
 
     brands = {
-        "beplugged tech": {
-            "name": "BePlugged Tech",
-            "industry": "Technology services",
-            "target_audience": "Small businesses and technology learners",
-            "tone": "Professional, educational and approachable",
-            "services": [
-                "Web development",
-                "Software development",
-                "IT training",
+    "beplugged tech": {
+        "name": "BePlugged Tech",
+        "industry": "Technology services",
+        "target_audience": "Small businesses and technology learners",
+        "tone": "Professional, educational and approachable",
+        "services": [
+            "Web development",
+            "Software development",
+            "IT training",
+        ],
+    },
+
+    "ubuntu frame studios": {
+        "name": "Ubuntu Frame Studios",
+        "industry": "Independent film production",
+        "target_audience": "African film audiences aged 18 to 35",
+        "tone": "Cinematic, intriguing, authentic and audience-focused",
+        "services": [
+            "Independent film production",
+            "Film release campaigns",
+            "Audience engagement",
+        ],
+        "film": {
+            "title": "Shadows of Pretoria",
+            "genre": "Crime drama",
+            "premiere_date": "20 October 2026",
+            "primary_market": "South Africa",
+            "release_platforms": [
+                "Instagram",
+                "TikTok",
+                "Facebook",
+                "YouTube",
             ],
-        }
-    }
+            "verified_facts": [
+                "Shadows of Pretoria is a fictional crime drama.",
+                "The premiere date is 20 October 2026.",
+                "The primary release market is South Africa.",
+                "The campaign targets African film audiences aged 18 to 35.",
+            ],
+        },
+    },
+}
 
     brand = brands.get(brand_name.lower())
 
@@ -189,6 +219,24 @@ When a user gives you a campaign brief:
 Do not invent important campaign information.
 
 If essential information is missing, ask the user for it before proceeding.
+
+FILM / STUDIO GROUNDING RULES:
+
+When working with film, studio, entertainment, or release-campaign information:
+
+- Treat only retrieved brand/studio information as verified facts.
+- Do not assume that trailers, behind-the-scenes footage, cast information,
+  character descriptions, reviews, awards, quotes, plot details, production
+  stories, interviews, release locations, or other promotional assets exist
+  unless they are present in the retrieved studio information.
+- Campaign ideas may recommend that such information would be useful, but
+  clearly mark them as requiring studio information or assets.
+- Do not present proposed content ideas as if the underlying material has
+  already been supplied.
+- Never invent plot details, cast members, reviews, audience reactions,
+  awards, production facts, premiere information, or release information.
+- Do not infer plot, setting, filming location, characters, themes, events,
+  or story details from a film title, genre, campaign topic, or other metadata.
 
 IMPORTANT CAMPAIGN CREATION RULE:
 
