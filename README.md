@@ -5033,3 +5033,464 @@ Document
   ↓
 Commit
 ```
+
+
+# ADK Agent → ClickHouse MCP Runtime Integration
+
+## Objective
+
+The previous MCP milestone proved that the official `mcp-clickhouse` server could independently access Premiere's ClickHouse data.
+
+The next goal was to prove the complete agent-driven runtime path:
+
+```text
+User
+  ↓
+Gemini / Google ADK Agent
+  ↓
+ADK MCPToolset
+  ↓
+Official mcp-clickhouse
+  ↓
+ClickHouse
+  ↓
+Premiere Data
+```
+
+This is materially different from manually invoking MCP tools through a CLI client.
+
+The objective was to demonstrate that a Gemini-powered ADK agent could discover and invoke the official ClickHouse MCP tools itself.
+
+---
+
+# ADK MCP Dependency
+
+The project currently uses:
+
+```text
+google-adk == 2.7.1
+```
+
+The ADK MCP integration requires the Python `mcp` package.
+
+An initial installation resulted in:
+
+```text
+mcp == 2.0.0
+```
+
+This was incompatible with the installed ADK version.
+
+ADK expected modules from the MCP 1.x API and produced:
+
+```text
+ModuleNotFoundError:
+No module named 'mcp.shared.session'
+```
+
+The installed ADK package metadata was inspected directly.
+
+It declared:
+
+```text
+mcp >= 1.24, < 2
+```
+
+The MCP dependency was therefore corrected to:
+
+```text
+mcp == 1.29.0
+```
+
+After this change:
+
+```python
+from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
+```
+
+imported successfully.
+
+This demonstrated the importance of checking package compatibility rather than simply installing the newest available dependency.
+
+---
+
+# Initial HTTP MCP Attempt
+
+The first ADK integration attempted to connect to the already-running HTTP MCP endpoint:
+
+```text
+http://127.0.0.1:8000/mcp
+```
+
+The official MCP server itself had already been independently verified using FastMCP.
+
+However, ADK's MCP tool discovery timed out while attempting to create the HTTP MCP session.
+
+The failure occurred during:
+
+```text
+list_tools
+```
+
+and resulted in:
+
+```text
+ConnectionError:
+Failed to get tools from MCP server
+```
+
+The same MCP HTTP endpoint continued to work correctly with the standalone FastMCP client.
+
+Therefore the failure was isolated to the ADK HTTP MCP session path rather than ClickHouse or `mcp-clickhouse`.
+
+---
+
+# Stdio MCP Integration
+
+Instead of continuing to debug the local HTTP transport, the ADK integration was changed to use MCP's stdio transport.
+
+The ADK `McpToolset` launches the official ClickHouse MCP server as a child process.
+
+Conceptually:
+
+```text
+Google ADK Agent
+      ↓
+McpToolset
+      ↓
+stdio
+      ↓
+uv
+      ↓
+official mcp-clickhouse
+      ↓
+ClickHouse
+```
+
+The ClickHouse MCP server inherited the existing authenticated ClickHouse configuration.
+
+Write access remained disabled:
+
+```text
+CLICKHOUSE_ALLOW_WRITE_ACCESS=false
+```
+
+Therefore the first ADK-driven MCP integration remained read-only.
+
+---
+
+# MCP Startup Timeout Discovered
+
+The first stdio tool-discovery attempt timed out after 30 seconds.
+
+During the failure, `uv` was still resolving/installing dependencies for the temporary `mcp-clickhouse` runtime environment.
+
+The ADK session timed out before the MCP process became ready.
+
+The MCP session timeout was increased to:
+
+```text
+120 seconds
+```
+
+and the exact `uv` command was run manually once to warm the dependency cache.
+
+After that, MCP startup completed normally.
+
+This failure was therefore caused by development-time dependency startup latency rather than a protocol or ClickHouse failure.
+
+---
+
+# ADK MCP Tool Discovery
+
+The ADK MCP toolset was tested directly before involving Gemini.
+
+The MCP server processed:
+
+```text
+ListToolsRequest
+```
+
+and ADK discovered exactly three ClickHouse tools:
+
+```text
+Tool count: 3
+
+list_databases
+list_tables
+run_query
+```
+
+This successfully proved:
+
+```text
+Google ADK
+    ↓
+MCPToolset
+    ↓
+Official mcp-clickhouse
+    ↓
+Tool discovery
+```
+
+The official ClickHouse MCP tools were now visible to the ADK runtime.
+
+---
+
+# Temporary MCP Test Agent
+
+A deliberately isolated test agent was created before modifying the production Premiere orchestrator.
+
+Its responsibility was only to:
+
+* query the `social_producer` database;
+* use ClickHouse MCP tools;
+* remain read-only;
+* avoid inventing database contents.
+
+The test agent had access only to:
+
+```text
+list_databases
+list_tables
+run_query
+```
+
+This followed the same development philosophy used for the other Premiere specialists:
+
+```text
+Build isolated capability
+        ↓
+Verify tools
+        ↓
+Test runtime behaviour
+        ↓
+Only then integrate with orchestrator
+```
+
+---
+
+# Tool Naming Failure
+
+During an early test, Gemini attempted to invoke:
+
+```text
+clickhouse__show_tables
+```
+
+which was not a registered MCP tool.
+
+ADK correctly rejected the call.
+
+Further investigation showed that MCP tool discovery had not completed successfully in the previous HTTP configuration.
+
+After moving to stdio and successfully discovering the actual tools, the test agent instructions were made explicit:
+
+```text
+Available tools:
+
+list_databases
+list_tables
+run_query
+```
+
+The agent was also instructed not to invent tool names.
+
+This reinforced an important rule:
+
+```text
+Plausible tool call
+        ≠
+Registered tool call
+```
+
+Agent tool availability must be verified independently.
+
+---
+
+# First Gemini-Initiated ClickHouse MCP Query
+
+The temporary MCP test agent was then run through ADK Web.
+
+The user asked:
+
+```text
+What is Campaign ID 3?
+
+Use the ClickHouse MCP tools to query the social_producer database.
+Do not answer from memory or assumptions.
+```
+
+Gemini successfully used the ClickHouse MCP integration and returned actual Premiere data.
+
+The response included:
+
+```text
+Campaign ID:
+3
+
+Brand:
+Ubuntu Frame Studios
+
+Objective:
+Build awareness and audience engagement leading up to the premiere.
+
+Target Audience:
+African film audiences aged 18 to 35
+
+Platforms:
+Instagram
+TikTok
+Facebook
+YouTube
+
+Duration:
+28 days
+
+Status:
+Draft
+```
+
+The response also retrieved the associated Premiere content item:
+
+```text
+Content ID:
+7
+
+Platform:
+Instagram
+
+Content Type:
+Engagement
+
+Topic:
+Interactive Q&A / Premiere Countdown Kickoff
+
+Campaign Day:
+5
+
+Status:
+Draft
+```
+
+The data matched the previously verified ClickHouse state.
+
+---
+
+# First Complete Agent-Driven MCP Path
+
+The following runtime path has now been demonstrated:
+
+```text
+User
+  ↓
+Gemini
+  ↓
+Google ADK Agent
+  ↓
+McpToolset
+  ↓
+run_query
+  ↓
+Official mcp-clickhouse
+  ↓
+ClickHouse
+  ↓
+social_producer.campaigns
+  ↓
+social_producer.content_items
+  ↓
+Campaign 3 + Content ID 7
+  ↓
+Gemini Response
+```
+
+This is the first successful proof that Gemini itself can access Premiere's ClickHouse state through the official ClickHouse MCP server.
+
+---
+
+# MCP Integration Status
+
+The following is now proven:
+
+```text
+[✓] google-adk MCP support identified
+[✓] Correct MCP package compatibility established
+[✓] mcp 2.x incompatibility identified
+[✓] mcp 1.29.0 installed
+[✓] MCPToolset imports successfully
+[✓] HTTP MCP ADK timeout investigated
+[✓] stdio MCP transport configured
+[✓] Official mcp-clickhouse launched by ADK
+[✓] MCP startup latency issue identified
+[✓] MCP session timeout adjusted
+[✓] MCP tool discovery verified
+[✓] list_databases visible to ADK
+[✓] list_tables visible to ADK
+[✓] run_query visible to ADK
+[✓] Temporary MCP test agent created
+[✓] Hallucinated tool-name failure identified
+[✓] Gemini initiated an MCP database query
+[✓] Campaign 3 retrieved through agent-driven MCP
+[✓] Content ID 7 retrieved through agent-driven MCP
+[✓] Returned data matched verified ClickHouse state
+[✓] MCP remained read-only
+```
+
+---
+
+# Important Architecture Boundary
+
+The temporary MCP test agent is not the final Premiere architecture.
+
+Current proven state:
+
+```text
+Premiere Root Agent
+    ↓
+Existing Python database tools
+    ↓
+clickhouse-connect
+```
+
+and separately:
+
+```text
+Temporary MCP Test Agent
+    ↓
+Official mcp-clickhouse
+    ↓
+ClickHouse
+```
+
+The next milestone is to connect controlled read-only MCP access to the actual Premiere orchestration layer.
+
+The temporary test agent should not become a permanent duplicate architecture.
+
+---
+
+# Next Milestone
+
+The next target is:
+
+```text
+User
+  ↓
+Premiere Director Agent
+  ↓
+Read-only ClickHouse MCP
+  ↓
+Campaign / Content / Analytics Queries
+```
+
+Important database writes should continue to respect explicit human approval.
+
+The initial Director MCP integration should therefore remain:
+
+```text
+READ ONLY
+```
+
+while controlled state-changing operations continue through the existing orchestrator tools.
+
+Only after this architecture is proven should MCP write access be evaluated.
