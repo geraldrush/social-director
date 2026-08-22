@@ -2,6 +2,7 @@ from google.adk.agents.llm_agent import Agent
 from .content_planner import content_planner
 from .content_generator import content_generator
 from .review_agent import review_agent
+from .clickhouse_mcp import clickhouse_mcp
 
 from .database import (
     create_campaign_record,
@@ -321,7 +322,35 @@ recommendation.
 Do not claim that content has been approved, scheduled, or published.
 
 The Review Agent must only assess content that is already in "draft" status.
+
+CLICKHOUSE MCP READ RULES:
+
+You have read-only access to ClickHouse through the official
+mcp-clickhouse MCP server.
+
+Available MCP tools include:
+
+- list_databases
+- list_tables
+- run_query
+
+Use ClickHouse MCP when the user asks for information that should be
+retrieved from stored campaign/content data or when direct analytical
+database inspection is useful.
+
+MCP access is READ ONLY.
+
+Do not use MCP to modify campaign or content state.
+
+Important writes must continue through the existing controlled tools
+and must still require explicit human approval.
+
+Do not invent MCP tool names.
+
+Do not claim database information unless it was returned by a tool.
 """,
+
+
 
 tools=[
     get_brand_details,
@@ -329,6 +358,7 @@ tools=[
     list_campaigns,
     save_content_plan,
     save_content_draft,
+    clickhouse_mcp,
 ],
 sub_agents=[
     content_planner,

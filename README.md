@@ -5494,3 +5494,531 @@ READ ONLY
 while controlled state-changing operations continue through the existing orchestrator tools.
 
 Only after this architecture is proven should MCP write access be evaluated.
+
+
+# Premiere Director Agent → ClickHouse MCP Runtime Integration
+
+## Objective
+
+The official ClickHouse MCP integration had already been proven independently through:
+
+```text
+FastMCP Client
+    ↓
+Official mcp-clickhouse
+    ↓
+ClickHouse
+```
+
+and through a temporary ADK MCP test agent.
+
+The next objective was to integrate the same read-only MCP capability into the actual Premiere root orchestrator.
+
+The target runtime path was:
+
+```text
+User
+  ↓
+Premiere Director / Root Agent
+  ↓
+Google ADK McpToolset
+  ↓
+Official mcp-clickhouse
+  ↓
+ClickHouse
+```
+
+---
+
+# Reusable ClickHouse MCP Module
+
+A reusable module was introduced:
+
+```text
+social_producer/clickhouse_mcp.py
+```
+
+Its responsibility is to configure the official ClickHouse MCP server for the Premiere application.
+
+The MCP server is launched by ADK using stdio rather than requiring a separately running HTTP process.
+
+Conceptually:
+
+```text
+Premiere Director
+      ↓
+clickhouse_mcp.py
+      ↓
+ADK McpToolset
+      ↓
+stdio
+      ↓
+uv
+      ↓
+official mcp-clickhouse
+      ↓
+ClickHouse
+```
+
+This means the MCP server lifecycle is owned by the ADK process.
+
+A manually running MCP server in another terminal is not required for this configuration.
+
+---
+
+# Read-Only MCP Boundary
+
+The production-style MCP configuration keeps:
+
+```text
+CLICKHOUSE_ALLOW_WRITE_ACCESS=false
+```
+
+The MCP interface is therefore currently restricted to database inspection and query operations.
+
+Available tools:
+
+```text
+list_databases
+list_tables
+run_query
+```
+
+Consequential application writes continue through the existing controlled Python tools and still require human approval.
+
+The architecture is currently:
+
+```text
+READ PATH
+
+Director Agent
+    ↓
+Official ClickHouse MCP
+    ↓
+ClickHouse
+
+
+CONTROLLED WRITE PATH
+
+Director Agent
+    ↓
+Human Approval
+    ↓
+Existing Python Tool
+    ↓
+database.py
+    ↓
+ClickHouse
+```
+
+MCP has not been granted write authority.
+
+---
+
+# Environment Inheritance Issue Discovered
+
+During the first production-style stdio test, the MCP child process unexpectedly started using HTTP transport.
+
+The cause was an older shell environment variable from previous testing:
+
+```text
+CLICKHOUSE_MCP_SERVER_TRANSPORT=http
+```
+
+The ADK child process inherited the parent shell environment.
+
+Because `clickhouse_mcp.py` included:
+
+```python
+env={
+    **os.environ,
+    ...
+}
+```
+
+the previous HTTP setting leaked into the new stdio configuration.
+
+The MCP process therefore started at:
+
+```text
+http://127.0.0.1:8000/mcp
+```
+
+while ADK was waiting for stdio communication.
+
+The ADK MCP session eventually timed out.
+
+---
+
+# Explicit Transport Override
+
+The reusable MCP configuration was corrected by explicitly setting:
+
+```text
+CLICKHOUSE_MCP_SERVER_TRANSPORT=stdio
+```
+
+inside the child-process environment.
+
+This overrides any stale value inherited from the parent shell.
+
+This produced the intended architecture:
+
+```text
+ADK
+  ↓
+McpToolset
+  ↓
+stdio
+  ↓
+mcp-clickhouse
+```
+
+An important development lesson was therefore:
+
+```text
+Inherited environment
+        ≠
+Intended child-process environment
+```
+
+Critical runtime configuration should be explicitly defined when subprocess behaviour depends on it.
+
+---
+
+# Production MCP Tool Discovery
+
+The reusable `clickhouse_mcp` toolset was tested independently before attaching it to the Director Agent.
+
+The official MCP server processed:
+
+```text
+ListToolsRequest
+```
+
+and ADK discovered:
+
+```text
+Tool count: 3
+
+list_databases
+list_tables
+run_query
+```
+
+This verified:
+
+```text
+clickhouse_mcp.py
+      ↓
+ADK
+      ↓
+official mcp-clickhouse
+      ↓
+Tool discovery successful
+```
+
+---
+
+# Director Agent Integration
+
+The reusable MCP toolset was then added to the real Premiere root agent.
+
+The existing specialist agents remained:
+
+```text
+Content Planning Agent
+Content Generation Agent
+Review Agent
+```
+
+The root agent now had six top-level tools/toolsets in total, including the read-only ClickHouse MCP integration.
+
+An import check confirmed:
+
+```text
+Root Agent:
+social_media_producer
+
+Sub-agents:
+content_planner
+content_generator
+review_agent
+
+Tool count:
+6
+```
+
+The existing direct ClickHouse tools were intentionally not removed.
+
+This allows the project to migrate toward MCP incrementally rather than destabilising proven write workflows.
+
+---
+
+# Director MCP Read Rules
+
+The Director Agent was instructed that:
+
+* ClickHouse MCP access is read-only;
+* stored campaign/content information may be retrieved through MCP;
+* MCP should not be used for state changes;
+* important writes must continue through controlled tools;
+* explicit human approval remains required;
+* MCP tool names must not be invented;
+* database claims must be based on actual tool results.
+
+This preserves the existing human-in-the-loop architecture while adding a new standardised read interface.
+
+---
+
+# Real Director Agent MCP Test
+
+The normal Premiere application was launched through ADK Web.
+
+The user asked:
+
+```text
+What is Campaign ID 3?
+
+Use the ClickHouse MCP tools to query the social_producer database.
+
+Do not answer from memory or from the existing list_campaigns tool.
+
+Use MCP for this request.
+```
+
+The Director Agent returned the correct Campaign 3 data:
+
+```text
+Brand:
+Ubuntu Frame Studios
+
+Objective:
+Build awareness and audience engagement leading up to the premiere.
+
+Target Audience:
+African film audiences aged 18 to 35
+
+Platforms:
+Instagram
+TikTok
+Facebook
+YouTube
+
+Duration:
+28 days
+
+Status:
+draft
+
+Created At:
+2026-08-22 09:59:47
+```
+
+The returned values matched the independently verified ClickHouse state.
+
+---
+
+# ADK Trace Evidence
+
+The correct response alone was not treated as sufficient proof of MCP usage.
+
+The ADK execution trace was inspected.
+
+The trace showed an actual tool invocation:
+
+```json
+{
+  "name": "run_query",
+  "response": {
+    "isError": false
+  }
+}
+```
+
+The MCP tool returned:
+
+```text
+campaign_id = 3
+brand_name = Ubuntu Frame Studios
+objective = Build awareness and audience engagement leading up to the premiere.
+target_audience = African film audiences aged 18 to 35
+platforms = Instagram, TikTok, Facebook, YouTube
+duration_days = 28
+status = draft
+created_at = 2026-08-22 09:59:47
+```
+
+The trace therefore independently proves:
+
+```text
+Director Agent
+      ↓
+run_query
+      ↓
+Official ClickHouse MCP
+      ↓
+ClickHouse
+      ↓
+Campaign 3
+```
+
+This is stronger evidence than inferring MCP use from the final natural-language answer.
+
+---
+
+# First Proven Production Director MCP Path
+
+The following path has now been demonstrated end-to-end:
+
+```text
+User
+  ↓
+Premiere Director / Root Agent
+  ↓
+Google ADK
+  ↓
+McpToolset
+  ↓
+run_query
+  ↓
+Official mcp-clickhouse
+  ↓
+ClickHouse
+  ↓
+social_producer.campaigns
+  ↓
+Campaign 3
+  ↓
+Director response
+```
+
+The MCP request completed successfully and returned real application state.
+
+---
+
+# Current ClickHouse Architecture
+
+Premiere currently uses two deliberately separated ClickHouse paths.
+
+## Read / Agent Inspection Path
+
+```text
+Gemini / ADK
+    ↓
+Official ClickHouse MCP
+    ↓
+ClickHouse
+```
+
+## Human-Controlled Write Path
+
+```text
+Director Agent
+    ↓
+Explicit Human Approval
+    ↓
+Python Tool
+    ↓
+database.py
+    ↓
+clickhouse-connect
+    ↓
+ClickHouse
+```
+
+This architecture allows MCP integration to deepen without weakening the existing state-change safety boundaries.
+
+---
+
+# Director MCP Milestone Status
+
+The following is now proven:
+
+```text
+[✓] Reusable ClickHouse MCP module created
+[✓] MCP credentials loaded from local environment
+[✓] MCP remains read-only
+[✓] Stdio MCP child process configured
+[✓] Environment-variable transport leak discovered
+[✓] Transport explicitly pinned to stdio
+[✓] ADK successfully discovered MCP tools
+[✓] list_databases available
+[✓] list_tables available
+[✓] run_query available
+[✓] Real Premiere Director Agent imports successfully with MCP
+[✓] Existing specialist agents preserved
+[✓] Director Agent given MCP read rules
+[✓] Campaign 3 queried through real Director Agent
+[✓] Actual run_query invocation observed in ADK trace
+[✓] MCP returned real ClickHouse data
+[✓] MCP tool result completed without error
+[✓] Existing human-approved write path preserved
+```
+
+---
+
+# Temporary MCP Test Harness
+
+The temporary:
+
+```text
+mcp_test_app/
+```
+
+and:
+
+```text
+social_producer/mcp_test_agent.py
+```
+
+were created to isolate MCP testing before modifying the production Director Agent.
+
+Now that the real Director Agent has successfully demonstrated MCP usage, those temporary testing components are no longer part of the intended production architecture.
+
+They may be removed once their debugging value is no longer needed.
+
+---
+
+# Next ClickHouse Milestone — Agent Observability
+
+With MCP now part of the real runtime, the next ClickHouse milestone is to start capturing agent execution events.
+
+The planned table is:
+
+```text
+agent_events
+```
+
+Its purpose will be to record runtime behaviour such as:
+
+```text
+agent execution
+delegation
+tool calls
+MCP calls
+latency
+success / failure
+error codes
+grounding decisions
+model usage
+```
+
+This will move ClickHouse beyond campaign/content persistence into actual multi-agent observability.
+
+The target architecture is:
+
+```text
+Director + Specialist Agents
+        ↓
+Execution Events
+        ↓
+agent_events
+        ↓
+ClickHouse
+        ↓
+Agent Reliability / Performance Analytics
+```
+
+This functionality has not yet been implemented.
+
