@@ -4358,3 +4358,678 @@ Commit
 ```
 
 The project should not claim future functionality as implemented until it has been tested and independently verified.
+
+# Official ClickHouse MCP Integration
+
+## Objective
+
+Premiere already uses ClickHouse directly through the Python `clickhouse-connect` client in `database.py`.
+
+The next integration milestone was to prove that the same application data could be accessed through the **official ClickHouse MCP server (`mcp-clickhouse`)**.
+
+The existing direct database integration was intentionally retained while MCP was introduced alongside it.
+
+The initial architecture is therefore:
+
+```text
+                    Premiere
+                       |
+          +------------+------------+
+          |                         |
+          v                         v
+     database.py              MCP Integration
+          |                         |
+          v                         v
+ clickhouse-connect          mcp-clickhouse
+          |                         |
+          +------------+------------+
+                       |
+                       v
+                   ClickHouse
+                       |
+              social_producer
+```
+
+This incremental approach avoids replacing a proven database integration before the MCP path has been independently tested.
+
+---
+
+# Local Development Environment
+
+The first MCP integration was developed against the existing local ClickHouse Docker instance.
+
+ClickHouse was reachable through its HTTP interface at:
+
+```text
+localhost:8123
+```
+
+Authenticated HTTP connectivity was verified with:
+
+```bash
+curl -u "social_producer:<password>" \
+  "http://localhost:8123/?query=SELECT%20version()"
+```
+
+The server returned:
+
+```text
+26.7.4.58
+```
+
+This confirmed:
+
+```text
+ClickHouse Docker
+        ↓
+HTTP :8123
+        ↓
+Authentication
+        ↓
+ClickHouse 26.7.4.58
+```
+
+Secrets are stored locally and are not committed to the repository.
+
+---
+
+# uv Installation
+
+The `uv` package manager was installed in the WSL development environment.
+
+Verified version:
+
+```text
+uv 0.12.5
+```
+
+This was used to run the official ClickHouse MCP server without modifying the existing project dependency environment.
+
+---
+
+# MCP Connection Configuration
+
+The MCP server was configured against the existing local ClickHouse instance using environment variables.
+
+The development configuration used:
+
+```text
+CLICKHOUSE_HOST=localhost
+CLICKHOUSE_PORT=8123
+CLICKHOUSE_USER=social_producer
+CLICKHOUSE_DATABASE=social_producer
+CLICKHOUSE_SECURE=false
+CLICKHOUSE_VERIFY=false
+CLICKHOUSE_ALLOW_WRITE_ACCESS=false
+```
+
+`CLICKHOUSE_PASSWORD` was supplied locally and is intentionally omitted from documentation.
+
+Write access was explicitly disabled during the first MCP integration tests.
+
+Therefore the initial MCP boundary was:
+
+```text
+mcp-clickhouse
+      ↓
+READ ONLY
+      ↓
+social_producer
+```
+
+This prevents the first MCP integration from modifying campaign or content state.
+
+---
+
+# Official MCP Server Startup
+
+The ClickHouse MCP server was started using:
+
+```bash
+uv run --with mcp-clickhouse --python 3.10 mcp-clickhouse
+```
+
+The server successfully reported:
+
+```text
+ClickHouse tools registered
+```
+
+and:
+
+```text
+Starting MCP server 'mcp-clickhouse'
+```
+
+The initial transport was:
+
+```text
+stdio
+```
+
+This confirmed that the official MCP server could start successfully with the local ClickHouse configuration.
+
+---
+
+# HTTP MCP Transport
+
+For easier local integration testing, the server was then configured to use HTTP transport.
+
+Development-only MCP authentication was disabled for the local test environment.
+
+The server successfully started at:
+
+```text
+http://127.0.0.1:8000/mcp
+```
+
+Uvicorn reported successful application startup.
+
+The local architecture became:
+
+```text
+MCP Client
+    |
+    | HTTP
+    v
+127.0.0.1:8000/mcp
+    |
+    v
+mcp-clickhouse
+    |
+    | ClickHouse HTTP
+    v
+localhost:8123
+    |
+    v
+ClickHouse
+```
+
+Authentication being disabled at the MCP HTTP layer is strictly a local-development configuration and is not intended for production deployment.
+
+ClickHouse itself remained authenticated.
+
+---
+
+# MCP Protocol Verification
+
+A basic HTTP request was sent to the MCP endpoint.
+
+The server returned an MCP protocol response indicating that the client needed to support:
+
+```text
+text/event-stream
+```
+
+This demonstrated that:
+
+```text
+HTTP endpoint reachable          ✓
+MCP server responding            ✓
+MCP protocol active              ✓
+```
+
+The plain HTTP request was not treated as a normal REST request, which is expected for an MCP protocol endpoint.
+
+---
+
+# MCP Tool Discovery
+
+An MCP-aware FastMCP client was then used to inspect the running server.
+
+The official ClickHouse MCP server exposed three tools:
+
+```text
+list_databases
+list_tables
+run_query
+```
+
+## `list_databases`
+
+Purpose:
+
+```text
+List available ClickHouse databases.
+```
+
+## `list_tables`
+
+Purpose:
+
+```text
+Inspect tables within a ClickHouse database,
+including schema and storage information.
+```
+
+## `run_query`
+
+Purpose:
+
+```text
+Execute ClickHouse SQL queries.
+```
+
+The tool reported that queries operate in read-only mode by default unless write access is explicitly enabled.
+
+This matched the intended security boundary for the first Premiere MCP integration.
+
+---
+
+# MCP Database Discovery Test
+
+The `list_databases` MCP tool was executed against the running server.
+
+The returned databases included:
+
+```text
+INFORMATION_SCHEMA
+default
+information_schema
+social_producer
+system
+```
+
+The important result was:
+
+```text
+social_producer
+```
+
+This proved that the official MCP server could successfully authenticate with ClickHouse and discover the Premiere development database.
+
+The verified path was:
+
+```text
+FastMCP Client
+      ↓
+mcp-clickhouse
+      ↓
+ClickHouse
+      ↓
+social_producer
+```
+
+---
+
+# MCP Table Discovery Test
+
+The `list_tables` tool was then executed against:
+
+```text
+social_producer
+```
+
+The MCP server returned:
+
+```text
+campaigns
+content_items
+```
+
+It also returned the actual ClickHouse metadata for both tables.
+
+## Campaigns
+
+Verified storage engine:
+
+```text
+MergeTree
+```
+
+Verified sorting key:
+
+```text
+brand_name, campaign_id
+```
+
+At the time of the MCP test:
+
+```text
+total_rows = 3
+```
+
+## Content Items
+
+Verified storage engine:
+
+```text
+MergeTree
+```
+
+Verified sorting key:
+
+```text
+campaign_id, platform, content_id
+```
+
+At the time of the MCP test:
+
+```text
+total_rows = 7
+```
+
+This demonstrated that MCP could inspect the actual schema rather than merely establish a network connection.
+
+---
+
+# Premiere Campaign Query Through MCP
+
+The `run_query` MCP tool was used to retrieve Campaign ID 3.
+
+The query targeted:
+
+```text
+social_producer.campaigns
+```
+
+with:
+
+```text
+campaign_id = 3
+```
+
+MCP returned:
+
+```text
+campaign_id:
+3
+
+brand_name:
+Ubuntu Frame Studios
+
+objective:
+Build awareness and audience engagement leading up to the premiere.
+
+target_audience:
+African film audiences aged 18 to 35
+
+platforms:
+Instagram
+TikTok
+Facebook
+YouTube
+
+duration_days:
+28
+
+status:
+draft
+```
+
+This was the same Premiere campaign previously created through the existing agent workflow and persisted through the direct ClickHouse integration.
+
+Therefore:
+
+```text
+Campaign 3
+     ↓
+ClickHouse
+     ↓
+mcp-clickhouse
+     ↓
+run_query
+     ↓
+Campaign successfully retrieved
+```
+
+---
+
+# Premiere Content Query Through MCP
+
+The MCP `run_query` tool was then used to retrieve:
+
+```text
+Content ID 7
+```
+
+from:
+
+```text
+social_producer.content_items
+```
+
+The MCP result confirmed:
+
+```text
+content_id:
+7
+
+campaign_id:
+3
+
+platform:
+Instagram
+
+content_type:
+engagement
+
+topic:
+Interactive Q&A / Premiere Countdown Kickoff
+
+campaign_day:
+5
+
+content_purpose:
+Encourage audience interaction and build excitement
+leading up to the verified 20 October 2026 premiere.
+
+status:
+draft
+```
+
+The persisted copy retrieved through MCP was:
+
+```text
+The countdown is officially on! ⏳
+
+Shadows of Pretoria premieres on 20 October 2026.
+
+We want to hear from you: What are you most looking forward
+to as we count down to the release, and where are you tuning
+in from? Drop your thoughts in the comments below! 👇✨
+
+#ShadowsOfPretoria #UbuntuFrameStudios
+#PremiereCountdown #AfricanCinema #FilmCommunity
+```
+
+This matched the exact human-approved Premiere draft previously verified through `database.py`.
+
+---
+
+# Dual ClickHouse Access Paths Proven
+
+Premiere now has two independently tested paths to the same ClickHouse state.
+
+## Existing Direct Integration
+
+```text
+Premiere
+    ↓
+database.py
+    ↓
+clickhouse-connect
+    ↓
+ClickHouse
+```
+
+This path currently handles the application's proven persistence workflow.
+
+## Official MCP Integration
+
+```text
+MCP Client
+    ↓
+Official mcp-clickhouse
+    ↓
+ClickHouse
+```
+
+This path has successfully demonstrated:
+
+```text
+Database discovery    ✓
+Table discovery       ✓
+Schema inspection     ✓
+Campaign queries      ✓
+Content queries       ✓
+Read-only boundary    ✓
+```
+
+Both paths independently retrieved the same Premiere application state.
+
+---
+
+# Why Direct Integration Has Not Been Removed
+
+The existing `database.py` implementation remains intentionally intact.
+
+The MCP milestone was introduced incrementally rather than immediately replacing working persistence code.
+
+Current state:
+
+```text
+database.py
+    ↓
+Proven application persistence
+
+mcp-clickhouse
+    ↓
+Proven MCP discovery/query integration
+```
+
+The next milestone will determine which agent operations should use MCP directly.
+
+This prevents architectural changes from being made merely for demonstration purposes without first verifying their runtime behaviour.
+
+---
+
+# Current MCP Security Boundary
+
+During this development milestone:
+
+```text
+CLICKHOUSE_ALLOW_WRITE_ACCESS=false
+```
+
+Therefore the MCP server is being treated as a read-only interface.
+
+MCP currently cannot be used by the Premiere workflow to:
+
+```text
+INSERT campaign data
+UPDATE content state
+DELETE records
+DROP tables
+TRUNCATE tables
+```
+
+Existing controlled writes continue through the root orchestrator and the established application tools.
+
+This preserves the existing human-in-the-loop write boundary while MCP integration is introduced.
+
+---
+
+# MCP Milestone Status
+
+The following has now been demonstrated:
+
+```text
+[✓] uv installed in WSL
+[✓] Local ClickHouse HTTP interface verified
+[✓] Authenticated ClickHouse connection verified
+[✓] Official mcp-clickhouse server started
+[✓] ClickHouse MCP tools registered
+[✓] stdio transport verified
+[✓] HTTP MCP transport verified
+[✓] MCP endpoint reachable
+[✓] MCP-aware client connected
+[✓] list_databases discovered
+[✓] list_tables discovered
+[✓] run_query discovered
+[✓] social_producer database discovered through MCP
+[✓] campaigns table inspected through MCP
+[✓] content_items table inspected through MCP
+[✓] MergeTree metadata returned through MCP
+[✓] Campaign 3 queried through MCP
+[✓] Content ID 7 queried through MCP
+[✓] MCP data matched existing application state
+[✓] MCP kept read-only during initial integration
+```
+
+---
+
+# Important Current Limitation
+
+Although the official MCP server can now successfully query Premiere's ClickHouse data, the current test client is a standalone MCP client.
+
+The following path has been proven:
+
+```text
+Human
+   ↓
+FastMCP Client
+   ↓
+mcp-clickhouse
+   ↓
+ClickHouse
+```
+
+The following path is the **next milestone** and must not yet be described as implemented:
+
+```text
+User
+   ↓
+Gemini / ADK Agent
+   ↓
+MCP Tool Call
+   ↓
+mcp-clickhouse
+   ↓
+ClickHouse
+```
+
+The next task is therefore to connect one Premiere ADK agent to the running MCP server and demonstrate an actual model-initiated ClickHouse MCP tool call.
+
+---
+
+# Next MCP Milestone
+
+The immediate target is:
+
+```text
+User:
+"What is Campaign 3?"
+        ↓
+Premiere ADK Agent
+        ↓
+MCP tool selection
+        ↓
+run_query
+        ↓
+mcp-clickhouse
+        ↓
+ClickHouse
+        ↓
+Campaign 3
+        ↓
+Agent response
+```
+
+The initial ADK integration should remain read-only.
+
+Only after agent-driven MCP reads have been demonstrated and tested should MCP write access be considered.
+
+The project will continue to follow:
+
+```text
+Build
+  ↓
+Test
+  ↓
+Verify
+  ↓
+Document
+  ↓
+Commit
+```
