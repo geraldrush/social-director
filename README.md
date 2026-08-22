@@ -2763,3 +2763,781 @@ Potential review responsibilities include:
 - recommending approval, revision, or rejection.
 
 The Review Agent will first be implemented as a read-only reviewer before any additional state transition is introduced.
+
+## Review Agent
+
+The next specialist added to the multi-agent architecture is the **Review Agent**.
+
+Its responsibility is different from the Content Planning Agent and Content Generation Agent:
+
+```text
+Content Planning Agent
+→ Decides WHAT content should be created.
+
+Content Generation Agent
+→ Decides HOW approved planned content should be written.
+
+Review Agent
+→ Determines whether generated draft content is suitable to progress.
+```
+
+The Review Agent is currently implemented as a **read-only specialist**.
+
+It does not have permission to:
+
+* modify content;
+* save revised content;
+* change content status;
+* approve content directly in ClickHouse;
+* schedule or publish content.
+
+This maintains the system's human-in-the-loop architecture, where specialist agents reason and recommend while consequential persistent actions remain controlled by the root orchestrator.
+
+### Review Agent Architecture
+
+The current multi-agent architecture is:
+
+```text
+                     User
+                      |
+                      v
+             Social Media Producer
+                / Orchestrator
+                      |
+        +-------------+-------------+
+        |             |             |
+        v             v             v
+ Content Planning   Content       Review
+      Agent        Generation      Agent
+                     Agent
+        |             |             |
+        v             v             v
+   Plan Content   Generate Copy   Assess Draft
+                                      |
+                                      v
+                           PASS / REVISE / BLOCKED
+```
+
+The Review Agent retrieves a specific content item through a guarded read tool.
+
+```text
+Content ID
+   ↓
+get_draft_content_item()
+   ↓
+Content must exist
+   ↓
+Content must have status = draft
+   ↓
+Review Agent
+   ↓
+PASS / REVISE / BLOCKED
+```
+
+No ClickHouse mutation occurs during this process.
+
+### Review Criteria
+
+The Review Agent currently evaluates draft content for:
+
+* factual grounding;
+* campaign alignment;
+* content-purpose alignment;
+* platform suitability;
+* unsupported claims;
+* missing information;
+* obvious quality problems.
+
+The agent returns one of three recommendations:
+
+```text
+PASS
+REVISE
+BLOCKED
+```
+
+A recommendation does not itself change the content item's status.
+
+### Successful Review Test — Content ID 4
+
+Content ID 4 was used for the first real orchestrated review test.
+
+The item contained Facebook engagement copy asking technology learners which practical IT skill they would most like to learn.
+
+The Review Agent returned:
+
+```text
+Recommendation: PASS
+
+Reason:
+The content aligns with the intended engagement purpose,
+is suitable for Facebook, and contains no unsupported
+factual claims or statistics.
+
+Issues:
+None
+
+Suggested changes:
+None
+```
+
+After the review, ClickHouse was independently queried.
+
+Content ID 4 remained:
+
+```text
+status = draft
+```
+
+and its `content_text` remained unchanged.
+
+This demonstrated:
+
+```text
+Root Orchestrator
+      ↓
+Review Agent
+      ↓
+Draft Retrieval
+      ↓
+Review
+      ↓
+PASS
+      ↓
+No Database Mutation
+```
+
+The read-only boundary therefore worked as intended.
+
+### Negative Grounding Test
+
+A deliberately problematic draft was created as Content ID 6.
+
+```text
+Content ID: 6
+Campaign ID: 2
+Platform: Facebook
+Content Type: promotional
+Topic: BePlugged Tech learner success
+Campaign Day: 5
+Status: draft
+```
+
+The test copy intentionally contains unsupported claims:
+
+```text
+BePlugged Tech has helped over 10,000 South African learners
+secure high-paying IT jobs. Join our training today and become
+our next success story!
+```
+
+Neither the claim of helping more than 10,000 learners nor the employment outcome is supported by the currently stored brand information.
+
+The purpose of this test is to verify that the Review Agent detects unsupported numerical, business, and outcome claims rather than allowing them to progress.
+
+### Wrong-Content Review Discovered During Testing
+
+During the first attempt at the negative test, the Review Agent returned a review for a different content item.
+
+The response described:
+
+* an educational Facebook post;
+* a single short sentence;
+* an empty `content_purpose`;
+* insufficient educational depth.
+
+Database inspection showed that these characteristics corresponded to Content ID 1 rather than the intended Content ID 6.
+
+The database was then inspected directly using `get_content_items(2)`, confirming that Content ID 6 existed with the intended deliberately unsupported promotional claims.
+
+This highlighted an important orchestration requirement:
+
+```text
+Requested Content ID
+        ↓
+Root Orchestrator
+        ↓
+Correct Specialist
+        ↓
+Exact Requested Record
+```
+
+A plausible review is not sufficient. The system must demonstrate that the specialist reviewed the exact requested database record.
+
+Future tests should therefore explicitly verify content identity as well as review quality.
+
+### Gemini Quota Failure During Negative Test
+
+The corrected Content ID 6 test was then attempted with an explicit instruction to retrieve and review that exact record.
+
+Gemini returned:
+
+```text
+429 RESOURCE_EXHAUSTED
+```
+
+The error reported that the free-tier request quota for the configured Gemini model had been exceeded.
+
+The reported quota was:
+
+```text
+generate_content_free_tier_requests
+limit: 20
+model: gemini-3.5-flash
+```
+
+This was an external model quota limitation rather than a ClickHouse, Review Agent, or application architecture failure.
+
+The project has therefore encountered three distinct Gemini/API operational failures during development:
+
+```text
+404 NOT_FOUND
+→ Model availability/version issue
+
+503 UNAVAILABLE
+→ Temporary model/service capacity issue
+
+429 RESOURCE_EXHAUSTED
+→ API quota limitation
+```
+
+The 429 error is particularly relevant to the multi-agent architecture because one user workflow may require multiple model invocations as work is delegated between specialist agents.
+
+Quota handling, retries, observability, and production model limits should therefore be considered later when the system moves toward deployment.
+
+No architecture redesign is being performed solely because of this development-time quota failure.
+
+### Current Review Agent Test Status
+
+The following has been proven:
+
+```text
+[✓] Review Agent created
+[✓] Review Agent imports successfully
+[✓] Review Agent connected to root orchestrator
+[✓] Root agent recognises three specialist agents
+[✓] Draft-only guarded retrieval
+[✓] Successful Content ID 4 review
+[✓] PASS recommendation
+[✓] Read-only Review Agent behaviour
+[✓] No ClickHouse mutation after review
+[✓] Independent database verification
+[✓] Wrong-content orchestration issue identified
+[✓] Negative test record created as Content ID 6
+[✓] Gemini 429 quota failure identified
+
+[ ] Content ID 6 unsupported-claim detection test completed
+[ ] REVISE/BLOCKED behaviour independently verified
+[ ] Controlled draft → approved transition
+```
+
+The negative Content ID 6 test remains **incomplete** because Gemini quota exhaustion prevented the corrected review request from completing.
+
+The next test after quota availability is restored is:
+
+```text
+Content ID 6
+    ↓
+Review Agent
+    ↓
+Detect unsupported claims
+    ↓
+REVISE or BLOCKED
+    ↓
+Verify ClickHouse
+    ↓
+Content must remain draft
+```
+
+Only after the Review Agent's negative behaviour has been proven should a controlled `draft → approved` workflow be considered.
+
+## Review Agent — Completed Milestone
+
+The third specialist added to the AI Social Media Producer is the **Review Agent**.
+
+Its responsibility is:
+
+> Determine whether generated draft content is suitable to progress.
+
+The Review Agent is deliberately **read-only**.
+
+It can inspect draft content and recommend an outcome, but it cannot:
+
+* modify content;
+* save revised content;
+* change content status;
+* approve content directly;
+* schedule content;
+* publish content;
+* perform ClickHouse mutations.
+
+This preserves the project's human-in-the-loop architecture.
+
+### Agent Responsibility Separation
+
+The implemented specialist responsibilities are now:
+
+```text
+Content Planning Agent
+→ Decides WHAT content should be created.
+
+Content Generation Agent
+→ Decides HOW approved planned content should be written.
+
+Review Agent
+→ Determines whether generated draft content is suitable to progress.
+```
+
+The root Social Media Producer remains responsible for orchestration and consequential persistent actions.
+
+### Current Multi-Agent Architecture
+
+```text
+                       User
+                        |
+                        v
+              Social Media Producer
+                 / Orchestrator
+                        |
+          +-------------+-------------+
+          |             |             |
+          v             v             v
+     Content        Content         Review
+     Planning      Generation       Agent
+      Agent          Agent
+          |             |             |
+          v             v             v
+    Plan Content   Generate Copy   Assess Draft
+                                      |
+                                      v
+                           PASS / REVISE / BLOCKED
+                                      |
+                                      v
+                              Human Decision
+```
+
+The Review Agent does not convert a recommendation into a database state change.
+
+### Guarded Draft Retrieval
+
+The Review Agent uses:
+
+```text
+get_draft_content_item()
+```
+
+to retrieve the requested content.
+
+The tool verifies:
+
+1. the content item exists;
+2. the requested record is retrieved;
+3. the item has `status = draft`.
+
+Conceptually:
+
+```text
+Content ID
+    ↓
+get_draft_content_item()
+    ↓
+Content exists?
+    ↓
+status == draft?
+    ↓
+Review Agent
+    ↓
+PASS / REVISE / BLOCKED
+```
+
+No write tool is available to the Review Agent.
+
+---
+
+## Review Criteria
+
+The Review Agent evaluates content for:
+
+* factual grounding;
+* unsupported claims;
+* campaign alignment;
+* content-purpose alignment;
+* brand alignment;
+* platform suitability;
+* missing information;
+* obvious quality problems.
+
+The Review Agent returns one of three recommendations:
+
+```text
+PASS
+REVISE
+BLOCKED
+```
+
+A recommendation is advisory only.
+
+`PASS` does not automatically mean:
+
+```text
+status = approved
+```
+
+Similarly, `BLOCKED` does not automatically modify or delete the draft.
+
+---
+
+## Positive Review Test — Content ID 4
+
+Content ID 4 was used to test the normal successful review path.
+
+The content was:
+
+```text
+Platform: Facebook
+Type: engagement
+Campaign Day: 4
+Topic: Which IT skill would you most like to learn?
+Status: draft
+```
+
+The draft asked technology learners which practical IT skill they would most like to master.
+
+The Review Agent returned:
+
+```text
+Recommendation: PASS
+```
+
+It determined that:
+
+* the copy aligned with the intended engagement purpose;
+* the tone was appropriate for Facebook;
+* the content contained no unsupported statistics;
+* the content contained no unsupported factual claims.
+
+It returned:
+
+```text
+Issues: None
+
+Suggested changes: None
+```
+
+### Independent Database Verification
+
+After the review, Content ID 4 was independently retrieved from ClickHouse.
+
+It remained:
+
+```text
+status = draft
+```
+
+and its `content_text` was unchanged.
+
+This proved:
+
+```text
+Root Orchestrator
+      ↓
+Review Agent
+      ↓
+Content ID 4
+      ↓
+PASS
+      ↓
+NO DATABASE MUTATION
+      ↓
+status remains draft
+```
+
+---
+
+# Negative Grounding Test — Content ID 6
+
+A deliberately problematic draft was created to test whether the Review Agent would detect unsupported factual claims rather than simply approve plausible-looking social-media copy.
+
+Content ID 6 contained:
+
+```text
+Content ID: 6
+Campaign ID: 2
+Platform: Facebook
+Content Type: promotional
+Topic: BePlugged Tech learner success
+Campaign Day: 5
+Status: draft
+```
+
+The deliberately problematic copy was:
+
+```text
+BePlugged Tech has helped over 10,000 South African learners
+secure high-paying IT jobs. Join our training today and become
+our next success story!
+```
+
+Two important claims were intentionally unsupported:
+
+```text
+"over 10,000 South African learners"
+
+"secure high-paying IT jobs"
+```
+
+Neither claim was supported by the available brand or campaign information.
+
+---
+
+## Exact-Record Retrieval Issue Discovered
+
+The first attempt at the negative test produced a review describing an educational Facebook post with:
+
+* one short sentence;
+* an empty `content_purpose`;
+* insufficient educational depth.
+
+Database inspection showed that these characteristics corresponded to **Content ID 1**, not Content ID 6.
+
+The database was inspected directly using:
+
+```text
+get_content_items(2)
+```
+
+This confirmed that Content ID 6 existed and contained the deliberately unsupported promotional claims.
+
+The test request was then strengthened to explicitly require:
+
+```text
+Review Content ID 6.
+
+Use the Review Agent to retrieve Content ID 6 from ClickHouse
+and review that exact draft.
+
+Do not review any other content item.
+```
+
+This development issue highlighted an important orchestration requirement:
+
+```text
+Correct Specialist
+        +
+Correct Database Record
+        =
+Valid Agent Result
+```
+
+A plausible AI response is not sufficient evidence of correct orchestration.
+
+---
+
+# Successful BLOCKED Test
+
+When the corrected Content ID 6 test was executed, the Review Agent returned:
+
+```text
+Recommendation: BLOCKED
+```
+
+The reason was that the draft contained highly specific statistical and factual claims that could not be verified using the available campaign or brand context.
+
+The Review Agent specifically detected:
+
+```text
+"over 10,000 South African learners"
+```
+
+and:
+
+```text
+"high-paying IT jobs"
+```
+
+as unsupported claims.
+
+This successfully demonstrated that the Review Agent does not merely evaluate writing quality.
+
+It can identify when apparently persuasive marketing copy depends on information that has not been grounded in available evidence.
+
+The resulting flow was:
+
+```text
+Content ID 6
+      ↓
+Root Orchestrator
+      ↓
+Review Agent
+      ↓
+Exact Draft Retrieved
+      ↓
+Factual Grounding Check
+      ↓
+Unsupported Claims Detected
+      ↓
+BLOCKED
+```
+
+---
+
+## Independent Safety Verification
+
+After the `BLOCKED` recommendation, Content ID 6 was independently queried from ClickHouse.
+
+The database still contained:
+
+```text
+content_id = 6
+status = draft
+```
+
+The original `content_text` was also completely unchanged.
+
+Therefore:
+
+```text
+BLOCKED
+   ≠
+Database Mutation
+```
+
+The Review Agent detected the problem but did not modify the underlying content.
+
+This independently proves the intended read-only safety boundary:
+
+```text
+Review Agent
+      ↓
+Reason
+      ↓
+Recommend
+      ↓
+STOP
+
+Human / Orchestrator remains responsible
+for consequential state changes.
+```
+
+---
+
+# Grounding Weakness Discovered in Suggested Changes
+
+The negative test revealed an additional grounding issue.
+
+Although the Review Agent correctly returned `BLOCKED`, one of its suggested safer alternatives included wording similar to:
+
+```text
+BePlugged Tech has helped South African learners
+launch their careers in IT.
+```
+
+This removes the unsupported numerical claim but still introduces an unsupported learner-outcome claim.
+
+The Review Agent therefore made the correct **classification decision**, but its suggested replacement copy was not fully grounded.
+
+This leads to an additional design principle:
+
+```text
+GROUNDING MUST APPLY TO:
+
+Original content
+        AND
+Review reasoning
+        AND
+Suggested revisions
+```
+
+A Review Agent must not remove one unsupported claim by replacing it with another unsupported claim.
+
+Future Review Agent instructions should explicitly require suggested changes and example rewrites to follow the same grounding rules as the content being reviewed.
+
+This is a known improvement rather than evidence that the `BLOCKED` classification failed.
+
+---
+
+# Gemini Quota Failure During Testing
+
+The negative test was temporarily interrupted by:
+
+```text
+429 RESOURCE_EXHAUSTED
+```
+
+Gemini reported that the configured free-tier request quota had been exceeded.
+
+The reported quota included:
+
+```text
+generate_content_free_tier_requests
+limit: 20
+model: gemini-3.5-flash
+```
+
+This was an external model quota limitation rather than a ClickHouse or application architecture failure.
+
+Development has now encountered three different external Gemini operational failures:
+
+```text
+404 NOT_FOUND
+→ Model availability/version problem
+
+503 UNAVAILABLE
+→ Temporary service/model capacity problem
+
+429 RESOURCE_EXHAUSTED
+→ API quota limitation
+```
+
+The 429 failure is particularly relevant to a multi-agent architecture because a single user workflow may involve multiple model calls across the orchestrator and specialist agents.
+
+Production architecture should therefore eventually consider:
+
+* quota management;
+* retry behaviour;
+* failure handling;
+* observability;
+* model-call monitoring.
+
+No architecture redesign was performed solely because of the development-time quota failure.
+
+---
+
+# Review Agent Milestone — Final Status
+
+The following capabilities have now been demonstrated:
+
+```text
+[✓] Review Agent created
+[✓] Review Agent imports successfully
+[✓] Review Agent connected to root orchestrator
+[✓] Three specialist agents registered
+[✓] Guarded draft retrieval
+[✓] Draft-only review boundary
+[✓] Root → Review Agent delegation
+[✓] Exact requested content retrieval tested
+[✓] PASS path tested with Content ID 4
+[✓] BLOCKED path tested with Content ID 6
+[✓] Factual-grounding review
+[✓] Unsupported numerical claim detection
+[✓] Unsupported outcome claim detection
+[✓] Read-only review behaviour
+[✓] No ClickHouse mutation after PASS
+[✓] No ClickHouse mutation after BLOCKED
+[✓] Draft status independently verified
+[✓] Original content independently verified unchanged
+[✓] Wrong-record orchestration issue discovered and investigated
+[✓] Suggested-rewrite grounding weakness identified
+[✓] Gemini 429 quota limitation documented
+```
+
+The Review Agent milestone is therefore considered **functionally complete**.
+
+One known improvement remains:
+
+```text
+Strengthen grounding rules for Review Agent
+suggested changes / example rewrites.
+```
+
+The next major development direction is the transition from the generic AI Social Media Producer test scenario toward **Premiere — AI Studio Producer**, using the existing multi-agent foundation for independent film release campaigns.

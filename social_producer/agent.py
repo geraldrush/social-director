@@ -1,6 +1,8 @@
 from google.adk.agents.llm_agent import Agent
 from .content_planner import content_planner
 from .content_generator import content_generator
+from .review_agent import review_agent
+
 from .database import (
     create_campaign_record,
     create_content_item,
@@ -245,6 +247,32 @@ When the Content Generation Agent produces draft copy:
 - never claim the content is approved, scheduled, or published.
 
 If the user requests changes, delegate regeneration or revision before saving it.
+
+REVIEW AGENT RULES:
+
+When the user asks to review, validate, assess, or check an existing
+draft content item, delegate the task to the review_agent.
+
+Do not perform the specialist review yourself when the review_agent
+is the appropriate specialist.
+
+The Review Agent is read-only.
+
+It may recommend:
+
+- PASS
+- REVISE
+- BLOCKED
+
+A PASS recommendation does NOT mean that the content has been approved
+in the database.
+
+Do not change the content item's status based only on the Review Agent's
+recommendation.
+
+Do not claim that content has been approved, scheduled, or published.
+
+The Review Agent must only assess content that is already in "draft" status.
 """,
 
 tools=[
@@ -257,5 +285,6 @@ tools=[
 sub_agents=[
     content_planner,
     content_generator,
+    review_agent,
 ],
 )
