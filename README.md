@@ -6359,3 +6359,600 @@ Planned analytics include:
 - token usage when available.
 
 This will extend ClickHouse from being only the application's operational data store into an **analytics and observability platform for the multi-agent system**.
+
+## Closed-Loop Campaign Optimisation
+
+The AI Social Producer now supports an evidence-driven campaign optimisation loop in which campaign performance data stored in ClickHouse can influence future content planning.
+
+This is an important architectural milestone because the system no longer only generates campaign content. It can observe campaign results, analyse performance, propose improvements, require human approval, and feed approved recommendations back into the planning process.
+
+### Architecture
+
+```text
+Campaign Content
+       │
+       ▼
+Engagement Events
+       │
+       ▼
+ClickHouse
+engagement_events
+       │
+       ▼
+Materialized View
+       │
+       ▼
+content_performance_daily
+       │
+       ├──────────────────────────┐
+       ▼                          ▼
+Analytics Agent            Optimisation Agent
+       │                          │
+       │                    Observations
+       │                    Hypotheses
+       │                    Recommendations
+       │                    Experiments
+       │                    Success Metrics
+       │                          │
+       │                          ▼
+       │              optimisation_recommendations
+       │                          │
+       │                          ▼
+       │                    Human Approval
+       │                          │
+       └──────────────────────────┤
+                                  ▼
+                           Content Planner
+                                  │
+                                  ▼
+                       Adaptive Content Proposal
+                                  │
+                                  ▼
+                            Human Review
+```
+
+---
+
+### Engagement Event Storage
+
+Raw campaign engagement events are stored in:
+
+```text
+social_producer.engagement_events
+```
+
+The table records engagement signals including:
+
+- impressions
+- views
+- likes
+- comments
+- shares
+- saves
+- clicks
+
+Events are associated with:
+
+- campaign ID
+- content ID
+- platform
+- event type
+- event value
+- source
+- occurrence time
+
+This provides the raw event stream used for campaign-performance analysis.
+
+---
+
+### Real-Time Performance Aggregation
+
+Campaign engagement events are automatically aggregated through a ClickHouse Materialized View:
+
+```text
+mv_content_performance_daily
+```
+
+The resulting roll-up table is:
+
+```text
+content_performance_daily
+```
+
+It uses `SummingMergeTree` to maintain aggregated daily performance metrics for each:
+
+```text
+date
+campaign
+content item
+platform
+```
+
+This means the agents do not need to repeatedly scan and aggregate the complete raw engagement-event dataset when evaluating campaign performance.
+
+---
+
+## Campaign 3 Test Dataset
+
+The optimisation workflow was tested using:
+
+**Campaign ID:** 3  
+**Film:** Shadows of Pretoria  
+**Brand:** Ubuntu Frame Studios  
+**Objective:** Build awareness and audience engagement leading up to the premiere.  
+**Target Audience:** African film audiences aged 18–35  
+**Platforms:** Instagram, TikTok, Facebook and YouTube
+
+The current engagement dataset is simulated for development and demonstration purposes.
+
+It must therefore not be represented as real production social-media performance data.
+
+---
+
+## Campaign Analytics
+
+Campaign-level and platform-level analytics functions were implemented to retrieve aggregated performance data from ClickHouse.
+
+The system successfully identified different performance characteristics across platforms.
+
+### Platform Performance
+
+| Platform | Impressions | Views | Clicks | Engagement Rate | Click Rate |
+|---|---:|---:|---:|---:|---:|
+| TikTok | 82,400 | 69,200 | 1,320 | 19.08% | 1.60% |
+| Instagram | 42,520 | 24,130 | 1,236 | 11.35% | 2.91% |
+| YouTube | 39,100 | 25,600 | 870 | 8.42% | 2.23% |
+| Facebook | 9,100 | 3,900 | 142 | 6.18% | 1.56% |
+
+The test demonstrated that the system can distinguish between different optimisation objectives.
+
+For example:
+
+- TikTok produced the strongest reach and engagement.
+- Instagram produced the highest click-through rate.
+- YouTube showed stronger performance for promotional content than general awareness content.
+- Facebook was the weakest-performing platform in the simulated dataset.
+
+The system therefore does not treat the single largest metric as automatically representing the "best" platform.
+
+---
+
+## Analytics Agent
+
+The Analytics Agent is responsible for interpreting campaign-performance data.
+
+It can analyse:
+
+- campaign performance
+- platform performance
+- strongest content
+- underperforming content
+- engagement behaviour
+- click behaviour
+
+The Analytics Agent is separate from the operational observability system.
+
+### Campaign Analytics
+
+Answers questions such as:
+
+```text
+Which platform performed best?
+
+Which content generated the most engagement?
+
+Which content generated the most clicks?
+
+Which content underperformed?
+```
+
+### Agent Observability
+
+The separate observability system analyses the AI application itself:
+
+```text
+tool latency
+tool failures
+agent sessions
+MCP calls
+model execution
+agent reliability
+```
+
+This distinction is intentional:
+
+```text
+Campaign Analytics
+        =
+How well is the marketing campaign performing?
+
+Agent Observability
+        =
+How well is the AI system performing?
+```
+
+Both datasets are stored and analysed using ClickHouse.
+
+---
+
+## Optimisation Agent
+
+A dedicated `optimisation_agent` was added to the multi-agent architecture.
+
+The agent currently has read-only access to:
+
+```text
+get_campaign_performance
+get_platform_performance
+```
+
+Its responsibility is to convert campaign-performance evidence into structured optimisation advice.
+
+It separates its reasoning into:
+
+1. Observations
+2. Hypotheses
+3. Recommendations
+4. Proposed experiments
+5. Success metrics
+
+The Optimisation Agent does not directly modify campaigns.
+
+This is an intentional safety boundary.
+
+---
+
+## Persisted Optimisation Recommendations
+
+Optimisation recommendations are stored in:
+
+```text
+social_producer.optimisation_recommendations
+```
+
+Each recommendation contains:
+
+```text
+recommendation_id
+campaign_id
+recommendation_type
+observation
+hypothesis
+recommendation
+experiment
+success_metric
+status
+created_at
+```
+
+This allows optimisation decisions to become persistent campaign knowledge rather than disappearing after an LLM conversation.
+
+---
+
+## First Persisted Recommendation
+
+Campaign 3 produced the first stored optimisation recommendation.
+
+**Recommendation ID:** 1
+
+### Observation
+
+TikTok generated:
+
+```text
+82,400 impressions
+69,200 views
+19.08% engagement rate
+1.60% click rate
+```
+
+TikTok therefore demonstrated strong awareness and engagement performance but weaker click-through efficiency.
+
+### Hypothesis
+
+Adding a stronger action-oriented CTA to a high-engagement TikTok format may improve click-through performance.
+
+### Recommendation
+
+Test a CTA-oriented TikTok post while preserving the behind-the-scenes or atmosphere format that performed strongly.
+
+### Experiment
+
+Create a TikTok experiment combining a high-engagement creative format with an explicit verified campaign CTA.
+
+### Success Metric
+
+```text
+TikTok click rate > 1.60%
+```
+
+while avoiding a substantial reduction in engagement.
+
+---
+
+## Human Approval Boundary
+
+Optimisation recommendations are not automatically executed.
+
+The Optimisation Agent remains read-only.
+
+Approval is controlled by the root Social Media Producer/Director.
+
+The workflow is:
+
+```text
+Optimisation Agent
+       │
+       ▼
+PROPOSED recommendation
+       │
+       ▼
+Human review
+       │
+       ▼
+Director approval
+       │
+       ▼
+APPROVED recommendation
+```
+
+This prevents an analytical agent from changing campaign strategy autonomously.
+
+---
+
+## ClickHouse Mutation Design
+
+An important ClickHouse-specific issue was encountered while implementing recommendation approval.
+
+The original table ordering included:
+
+```text
+status
+```
+
+An attempt to update the recommendation status therefore produced:
+
+```text
+DB::Exception:
+Cannot UPDATE key column `status`.
+(CANNOT_UPDATE_COLUMN)
+```
+
+This occurred because ClickHouse does not permit mutation of a column that participates in the sorting key.
+
+The table design was corrected so that mutable workflow state is not part of the immutable ordering key.
+
+This was an important architectural lesson when modelling workflow state in ClickHouse.
+
+---
+
+## Planner Integration
+
+The Content Planner was extended with:
+
+```text
+get_optimisation_recommendations
+```
+
+Its tools now include:
+
+```text
+get_campaign_by_id
+list_campaign_content
+get_optimisation_recommendations
+```
+
+The Planner can therefore inspect:
+
+1. the campaign definition;
+2. existing campaign content;
+3. optimisation recommendations.
+
+However, it is instructed to use only recommendations whose status is:
+
+```text
+approved
+```
+
+Proposed or rejected recommendations must not influence adaptive planning.
+
+---
+
+## First Closed-Loop Planning Test
+
+The first complete optimisation-feedback test was successfully performed against Campaign 3.
+
+The Planner retrieved approved Recommendation ID 1 and proposed:
+
+**Platform:** TikTok  
+**Content Type:** Engagement / Call-to-Action experiment  
+**Topic:** TikTok Atmosphere & Premiere Reminder Experiment  
+**Suggested Campaign Day:** Day 19
+
+### Experiment Purpose
+
+Test whether combining TikTok's high-engagement atmosphere format with an explicit verified premiere-date CTA can increase click-through performance.
+
+### Success Metric
+
+```text
+TikTok CTR > 1.60%
+```
+
+without substantially reducing engagement.
+
+The Planner correctly stated that the proposal was:
+
+```text
+Human review only
+```
+
+and did not:
+
+```text
+save content
+schedule content
+publish content
+modify existing campaign content
+```
+
+---
+
+## Closed-Loop Optimisation Milestone
+
+The following loop has now been demonstrated:
+
+```text
+        ┌─────────────────────────┐
+        │     Campaign Content    │
+        └────────────┬────────────┘
+                     │
+                     ▼
+        ┌─────────────────────────┐
+        │    Engagement Events    │
+        └────────────┬────────────┘
+                     │
+                     ▼
+        ┌─────────────────────────┐
+        │       ClickHouse        │
+        │ Analytics + Aggregation │
+        └────────────┬────────────┘
+                     │
+                     ▼
+        ┌─────────────────────────┐
+        │     Analytics Agent     │
+        └────────────┬────────────┘
+                     │
+                     ▼
+        ┌─────────────────────────┐
+        │   Optimisation Agent    │
+        └────────────┬────────────┘
+                     │
+                     ▼
+        ┌─────────────────────────┐
+        │     Recommendation      │
+        └────────────┬────────────┘
+                     │
+                     ▼
+        ┌─────────────────────────┐
+        │      Human Approval     │
+        └────────────┬────────────┘
+                     │
+                     ▼
+        ┌─────────────────────────┐
+        │     Content Planner     │
+        └────────────┬────────────┘
+                     │
+                     ▼
+        ┌─────────────────────────┐
+        │  Experimental Proposal  │
+        └────────────┬────────────┘
+                     │
+                     ▼
+               Human Review
+```
+
+This demonstrates that ClickHouse is not being used only as passive storage.
+
+It acts as the analytical memory and feedback layer connecting campaign execution, performance analysis, optimisation recommendations and future agent decisions.
+
+---
+
+## ClickHouse Track Alignment
+
+The project currently demonstrates several important ClickHouse capabilities.
+
+### Implemented
+
+- MergeTree event storage
+- high-volume-style engagement event modelling
+- Materialized Views
+- SummingMergeTree performance aggregation
+- campaign analytics
+- agent execution observability
+- tool latency and reliability analytics
+- persistent optimisation recommendations
+- ClickHouse MCP integration
+- LLM access to ClickHouse through MCP
+- multi-agent decision flow
+- human-controlled optimisation approval
+- data-driven adaptive content planning
+
+### Still Planned
+
+The next ClickHouse-focused capabilities include:
+
+- materialized operational agent-performance rollups
+- richer recommendation lifecycle tracking
+- experiment-result comparison
+- automatic baseline-vs-experiment analysis
+- recommendation outcome tracking
+- vector embeddings for campaign assets
+- ClickHouse native vector similarity search
+- hybrid metadata + semantic asset retrieval
+
+---
+
+## Current Multi-Agent Architecture
+
+```text
+                    Social Media Producer
+                         (Director)
+                              │
+          ┌───────────────────┼───────────────────┐
+          │                   │                   │
+          ▼                   ▼                   ▼
+ Content Planner      Content Generator       Review Agent
+          │
+          │
+          ├───────────────────────────────┐
+          │                               │
+          ▼                               ▼
+ Analytics Agent                 Optimisation Agent
+                                          │
+                                          ▼
+                              Optimisation Recommendation
+                                          │
+                                          ▼
+                                  Human Approval
+                                          │
+                                          └──────► Planner feedback
+```
+
+The root Director remains responsible for coordinating agents and controlling write operations.
+
+---
+
+## Current Project Position
+
+The project has moved beyond:
+
+```text
+Prompt → LLM → social media post
+```
+
+and now demonstrates:
+
+```text
+Plan
+ ↓
+Generate
+ ↓
+Review
+ ↓
+Measure
+ ↓
+Analyse
+ ↓
+Optimise
+ ↓
+Human Approve
+ ↓
+Re-plan
+ ↓
+Experiment
+ ↓
+Measure Again
+```
+
+The next major milestone is to persist the approved experimental content item, generate controlled simulated results for the experiment, and allow the analytics/optimisation layer to determine whether Recommendation ID 1 actually improved campaign performance.
