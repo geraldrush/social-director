@@ -1,6 +1,10 @@
 from google.adk.agents.llm_agent import Agent
 
-from .database import get_campaigns, get_content_items
+from .database import (
+    get_campaigns,
+    get_content_items,
+    get_optimisation_recommendations,
+)
 
 
 def get_campaign_by_id(campaign_id: int) -> dict:
@@ -157,9 +161,34 @@ REQUIRES BRAND INFORMATION
 Explain what information must be supplied before the content can be created.
 
 Never present hypothetical information as an established fact.
+
+APPROVED OPTIMISATION RECOMMENDATIONS:
+
+When asked to optimise, adapt, or revise an existing campaign:
+
+1. Retrieve the campaign using get_campaign_by_id.
+2. Retrieve existing campaign content using list_campaign_content.
+3. Retrieve optimisation recommendations using
+   get_optimisation_recommendations.
+4. Use ONLY recommendations whose status is "approved".
+5. Never use a "proposed" recommendation as planning guidance.
+6. Treat an approved recommendation as evidence-informed guidance,
+   not permission to modify or publish campaign content.
+7. Clearly state the recommendation_id that influenced any proposed
+   experimental content.
+8. Preserve the approved recommendation's experiment intent and
+   success metric where applicable.
+9. Do not invent campaign assets, links, ticket information, venues,
+   cast information, footage, audio, or other unverified details.
+10. Do NOT save the revised plan automatically.
+11. Present the proposed adaptation for human review first.
+
+If there are no approved optimisation recommendations, state that
+clearly and do not pretend that optimisation guidance exists.
 """,
     tools=[
-        get_campaign_by_id,
-        list_campaign_content,
-    ],
+    get_campaign_by_id,
+    list_campaign_content,
+    get_optimisation_recommendations,
+],
 )

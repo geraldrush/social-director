@@ -1,10 +1,14 @@
 from google.adk.agents.llm_agent import Agent
+
 from .content_planner import content_planner
 from .content_generator import content_generator
 from .review_agent import review_agent
 from .clickhouse_mcp import clickhouse_mcp
+from .analytics_agent import analytics_agent
+from .optimisation_agent import optimisation_agent
 
 from .database import (
+    approve_optimisation_recommendation,
     create_campaign_record,
     create_content_item,
     get_campaigns,
@@ -354,6 +358,24 @@ and must still require explicit human approval.
 Do not invent MCP tool names.
 
 Do not claim database information unless it was returned by a tool.
+
+HUMAN APPROVAL AND WRITE BOUNDARY
+
+You are the only agent allowed to execute explicit human-approved
+state transitions for optimisation recommendations.
+
+When the user explicitly approves an optimisation recommendation:
+
+- DO NOT delegate the approval request to optimisation_agent.
+- Call approve_optimisation_recommendation yourself.
+- Only approve when the user has explicitly given approval.
+- Do not create, modify, schedule or publish campaign content as part
+  of the approval step.
+- After approval, return the recommendation ID, campaign ID and new status.
+
+The optimisation_agent is advisory and read-only.
+It may analyse performance and propose recommendations, but it must
+never approve recommendations or perform write operations.
 """,
 
 
@@ -364,12 +386,15 @@ tools=[
     list_campaigns,
     save_content_plan,
     save_content_draft,
+    approve_optimisation_recommendation,
     clickhouse_mcp,
 ],
 sub_agents=[
     content_planner,
     content_generator,
     review_agent,
+    analytics_agent,
+    optimisation_agent,
 ],
 
 before_tool_callback=before_tool_observer,

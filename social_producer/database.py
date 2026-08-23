@@ -546,3 +546,398 @@ def get_agent_events(session_id=None):
         )
 
     return events
+
+def get_tool_analytics():
+    """
+    Return aggregated tool usage and performance analytics
+    from ClickHouse agent_events.
+    """
+
+    result = client.query("""
+        SELECT
+            tool_name,
+            count() AS calls,
+            countIf(status = 'success') AS successes,
+            countIf(status != 'success') AS failures,
+            round(avg(latency_ms), 2) AS avg_latency_ms,
+            max(latency_ms) AS max_latency_ms
+        FROM social_producer.agent_events
+        WHERE event_type = 'tool_call'
+        GROUP BY tool_name
+        ORDER BY calls DESC
+    """)
+
+    analytics = []
+
+    for row in result.result_rows:
+        analytics.append({
+            "tool_name": row[0],
+            "calls": row[1],
+            "successes": row[2],
+            "failures": row[3],
+            "avg_latency_ms": row[4],
+            "max_latency_ms": row[5],
+        })
+
+    return analytics
+
+
+def get_session_analytics():
+    """
+    Return aggregated agent/tool activity grouped by session.
+    """
+
+    result = client.query("""
+        SELECT
+            session_id,
+            count() AS event_count,
+            countIf(event_type = 'tool_call') AS tool_calls,
+            countIf(status = 'success') AS successes,
+            countIf(status != 'success') AS failures,
+            round(avg(latency_ms), 2) AS avg_latency_ms,
+            sum(latency_ms) AS total_latency_ms,
+            min(created_at) AS started_at,
+            max(created_at) AS ended_at
+        FROM social_producer.agent_events
+        GROUP BY session_id
+        ORDER BY started_at DESC
+    """)
+
+    sessions = []
+
+    for row in result.result_rows:
+        sessions.append({
+            "session_id": row[0],
+            "event_count": row[1],
+            "tool_calls": row[2],
+            "successes": row[3],
+            "failures": row[4],
+            "avg_latency_ms": row[5],
+            "total_latency_ms": row[6],
+            "started_at": row[7],
+            "ended_at": row[8],
+        })
+
+    return sessions
+
+def get_campaign_performance(campaign_id: int):
+    """
+    Return aggregated performance for each content item
+    belonging to a campaign.
+    """
+
+    result = client.query(
+        """
+        SELECT
+            p.content_id,
+            p.platform,
+            c.content_type,
+            c.topic,
+            sum(p.impressions) AS impressions,
+            sum(p.views) AS views,
+            sum(p.likes) AS likes,
+            sum(p.comments) AS comments,
+            sum(p.shares) AS shares,
+            sum(p.saves) AS saves,
+            sum(p.clicks) AS clicks
+        FROM social_producer.content_performance_daily AS p
+        LEFT JOIN social_producer.content_items AS c
+            ON p.content_id = c.content_id
+           AND p.campaign_id = c.campaign_id
+        WHERE p.campaign_id = {campaign_id:UInt64}
+        GROUP BY
+            p.content_id,
+            p.platform,
+            c.content_type,
+            c.topic
+        ORDER BY impressions DESC
+        """,
+        parameters={"campaign_id": campaign_id},
+    )
+
+    columns = [
+        "content_id",
+        "platform",
+        "content_type",
+        "topic",
+        "impressions",
+        "views",
+        "likes",
+        "comments",
+        "shares",
+        "saves",
+        "clicks",
+    ]
+
+    return [
+        dict(zip(columns, row))
+        for row in result.result_rows
+    ]
+
+
+def get_platform_performance(campaign_id: int):
+    """
+    Aggregate campaign engagement by social platform.
+    """
+
+    result = client.query(
+        """
+        SELECT
+            platform,
+            impressions,
+            views,
+            likes,
+            comments,
+            shares,
+            saves,
+            clicks,
+            round(
+                100.0 * (likes + comments + shares + saves)
+                / nullIf(impressions, 0),
+                2
+            ) AS engagement_rate,
+            round(
+                100.0 * clicks
+                / nullIf(impressions, 0),
+                2
+            ) AS click_rate
+        FROM
+        (
+            SELECT
+                platform,
+                sum(impressions) AS impressions,
+                sum(views) AS views,
+                sum(likes) AS likes,
+                sum(comments) AS comments,
+                sum(shares) AS shares,
+                sum(saves) AS saves,
+                sum(clicks) AS clicks
+            FROM social_producer.content_performance_daily
+            WHERE campaign_id = {campaign_id:UInt64}
+            GROUP BY platform
+        )
+        ORDER BY impressions DESC
+        """,
+        parameters={"campaign_id": campaign_id},
+    )
+
+    columns = [
+        "platform",
+        "impressions",
+        "views",
+        "likes",
+        "comments",
+        "shares",
+        "saves",
+        "clicks",
+        "engagement_rate",
+        "click_rate",
+    ]
+
+    return [
+        dict(zip(columns, row))
+        for row in result.result_rows
+    ]
+
+def get_next_recommendation_id():
+    """
+    Return the next available optimisation recommendation ID.
+    """
+    result = client.query("""
+        SELECT ifNull(max(recommendation_id), 0) + 1
+        FROM social_producer.optimisation_recommendations
+    """)
+
+    return result.result_rows[0][0]
+
+
+def save_optimisation_recommendation(
+    campaign_id: int,
+    recommendation_type: str,
+    observation: str,
+    hypothesis: str,
+    recommendation: str,
+    experiment: str,
+    success_metric: str,
+):
+    """
+    Save a proposed optimisation recommendation to ClickHouse.
+
+    Recommendations are always created with status='proposed'.
+    Human approval is required before they can influence planning.
+    """
+
+    recommendation_id = get_next_recommendation_id()
+
+    client.insert(
+        "social_producer.optimisation_recommendations",
+        [[
+            recommendation_id,
+            campaign_id,
+            recommendation_type,
+            observation,
+            hypothesis,
+            recommendation,
+            experiment,
+            success_metric,
+            "proposed",
+        ]],
+        column_names=[
+            "recommendation_id",
+            "campaign_id",
+            "recommendation_type",
+            "observation",
+            "hypothesis",
+            "recommendation",
+            "experiment",
+            "success_metric",
+            "status",
+        ],
+    )
+
+    return {
+        "status": "success",
+        "recommendation_id": recommendation_id,
+        "campaign_id": campaign_id,
+        "recommendation_status": "proposed",
+    }
+
+
+def get_optimisation_recommendations(
+    campaign_id: int,
+    status: str | None = None,
+):
+    """
+    Return optimisation recommendations for a campaign.
+
+    Optionally filter by recommendation status.
+    """
+
+    if status:
+        result = client.query(
+            """
+            SELECT
+                recommendation_id,
+                campaign_id,
+                recommendation_type,
+                observation,
+                hypothesis,
+                recommendation,
+                experiment,
+                success_metric,
+                status,
+                created_at
+            FROM social_producer.optimisation_recommendations
+            WHERE campaign_id = {campaign_id:UInt64}
+              AND status = {status:String}
+            ORDER BY created_at DESC, recommendation_id DESC
+            """,
+            parameters={
+                "campaign_id": campaign_id,
+                "status": status,
+            },
+        )
+    else:
+        result = client.query(
+            """
+            SELECT
+                recommendation_id,
+                campaign_id,
+                recommendation_type,
+                observation,
+                hypothesis,
+                recommendation,
+                experiment,
+                success_metric,
+                status,
+                created_at
+            FROM social_producer.optimisation_recommendations
+            WHERE campaign_id = {campaign_id:UInt64}
+            ORDER BY created_at DESC, recommendation_id DESC
+            """,
+            parameters={
+                "campaign_id": campaign_id,
+            },
+        )
+
+    recommendations = []
+
+    for row in result.result_rows:
+        recommendations.append({
+            "recommendation_id": row[0],
+            "campaign_id": row[1],
+            "recommendation_type": row[2],
+            "observation": row[3],
+            "hypothesis": row[4],
+            "recommendation": row[5],
+            "experiment": row[6],
+            "success_metric": row[7],
+            "status": row[8],
+            "created_at": row[9],
+        })
+
+    return recommendations
+
+
+def approve_optimisation_recommendation(
+    recommendation_id: int,
+):
+    """
+    Approve a proposed optimisation recommendation.
+
+    ClickHouse mutations are used deliberately here because approval
+    is a low-frequency human workflow rather than a high-volume event.
+    """
+
+    existing = client.query(
+        """
+        SELECT
+            recommendation_id,
+            campaign_id,
+            status
+        FROM social_producer.optimisation_recommendations
+        WHERE recommendation_id = {recommendation_id:UInt64}
+        LIMIT 1
+        """,
+        parameters={
+            "recommendation_id": recommendation_id,
+        },
+    )
+
+    if not existing.result_rows:
+        return {
+            "status": "error",
+            "message": "Recommendation not found.",
+        }
+
+    row = existing.result_rows[0]
+    campaign_id = row[1]
+    current_status = row[2]
+
+    if current_status != "proposed":
+        return {
+            "status": "error",
+            "recommendation_id": recommendation_id,
+            "current_status": current_status,
+            "message": (
+                "Only proposed recommendations can be approved."
+            ),
+        }
+
+    client.command(
+        """
+        ALTER TABLE social_producer.optimisation_recommendations
+        UPDATE status = 'approved'
+        WHERE recommendation_id = {recommendation_id:UInt64}
+        """,
+        parameters={
+            "recommendation_id": recommendation_id,
+        },
+    )
+
+    return {
+        "status": "success",
+        "recommendation_id": recommendation_id,
+        "campaign_id": campaign_id,
+        "recommendation_status": "approved",
+    }
