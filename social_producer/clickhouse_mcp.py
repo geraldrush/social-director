@@ -7,7 +7,6 @@ from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
 from mcp import StdioServerParameters
 
 
-# Load the project's local ClickHouse credentials.
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(env_path)
 
@@ -15,15 +14,8 @@ load_dotenv(env_path)
 clickhouse_mcp = McpToolset(
     connection_params=StdioConnectionParams(
         server_params=StdioServerParameters(
-            command=os.path.expanduser("~/.local/bin/uv"),
-            args=[
-                "run",
-                "--with",
-                "mcp-clickhouse",
-                "--python",
-                "3.10",
-                "mcp-clickhouse",
-            ],
+            command="/home/gery/.local/bin/mcp-clickhouse",
+            args=[],
             env={
                 **os.environ,
                 "CLICKHOUSE_HOST": os.environ["CLICKHOUSE_HOST"],
@@ -35,7 +27,6 @@ clickhouse_mcp = McpToolset(
                 "CLICKHOUSE_VERIFY": "false",
                 "CLICKHOUSE_ALLOW_WRITE_ACCESS": "false",
                 "CLICKHOUSE_MCP_SERVER_TRANSPORT": "stdio",
-                "CLICKHOUSE_MCP_AUTH_DISABLED": "true",
             },
         ),
         timeout=120.0,

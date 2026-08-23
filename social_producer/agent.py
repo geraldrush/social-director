@@ -13,6 +13,11 @@ from .database import (
     save_generated_content,
 )
 
+from .observability import (
+    after_tool_observer,
+    before_tool_observer,
+    tool_error_observer,
+)
 
 
 def get_brand_details(brand_name: str) -> dict:
@@ -182,6 +187,7 @@ def save_content_draft(content_id: int, content_text: str) -> dict:
 root_agent = Agent(
     model="gemini-3.5-flash",
     name="social_media_producer",
+    
 
     description=(
         "An AI Social Media Producer that helps businesses plan, "
@@ -365,4 +371,8 @@ sub_agents=[
     content_generator,
     review_agent,
 ],
+
+before_tool_callback=before_tool_observer,
+after_tool_callback=after_tool_observer,
+on_tool_error_callback=tool_error_observer,
 )

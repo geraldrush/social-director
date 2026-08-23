@@ -282,6 +282,7 @@ def get_content_items(campaign_id=None):
 
     return content_items
 
+
 def get_content_item_by_id(content_id: int):
     """
     Retrieve one content item from ClickHouse by content ID.
@@ -364,3 +365,184 @@ def save_generated_content(content_id: int, content_text: str):
         "content_id": content_id,
         "status": "draft",
     }
+
+
+# =========================================================
+# AGENT EVENTS / OBSERVABILITY
+# =========================================================
+
+def get_next_agent_event_id():
+    """
+    Return the next agent event ID.
+
+    For the current implementation this uses
+    MAX(event_id) + 1.
+    """
+
+    result = client.query("""
+        SELECT ifNull(max(event_id), 0) + 1
+        FROM social_producer.agent_events
+    """)
+
+    return result.result_rows[0][0]
+
+
+def log_agent_event(
+    session_id,
+    agent_name,
+    event_type,
+    parent_agent="",
+    tool_name="",
+    campaign_id=None,
+    content_id=None,
+    status="success",
+    error_code="",
+    model_name="",
+    grounding_result="not_applicable",
+    latency_ms=0,
+    input_tokens=0,
+    output_tokens=0,
+    event_id=None,
+):
+    """
+    Store one agent execution/observability event in ClickHouse.
+
+    event_id is automatically generated when not explicitly supplied.
+
+    This function currently supports manual and controlled event logging.
+    Automatic ADK instrumentation will be added separately.
+    """
+
+    if event_id is None:
+        event_id = get_next_agent_event_id()
+
+    client.insert(
+        "social_producer.agent_events",
+        [
+            [
+                event_id,
+                session_id,
+                parent_agent,
+                agent_name,
+                event_type,
+                tool_name,
+                campaign_id,
+                content_id,
+                status,
+                error_code,
+                model_name,
+                grounding_result,
+                latency_ms,
+                input_tokens,
+                output_tokens,
+            ]
+        ],
+        column_names=[
+            "event_id",
+            "session_id",
+            "parent_agent",
+            "agent_name",
+            "event_type",
+            "tool_name",
+            "campaign_id",
+            "content_id",
+            "status",
+            "error_code",
+            "model_name",
+            "grounding_result",
+            "latency_ms",
+            "input_tokens",
+            "output_tokens",
+        ],
+    )
+
+    return {
+        "status": "success",
+        "event_id": event_id,
+    }
+
+
+def get_agent_events(session_id=None):
+    """
+    Retrieve agent observability events.
+
+    If session_id is provided, only events belonging to that
+    workflow/session are returned.
+
+    Otherwise all events are returned.
+    """
+
+    if session_id is not None:
+        result = client.query(
+            """
+            SELECT
+                event_id,
+                session_id,
+                parent_agent,
+                agent_name,
+                event_type,
+                tool_name,
+                campaign_id,
+                content_id,
+                status,
+                error_code,
+                model_name,
+                grounding_result,
+                latency_ms,
+                input_tokens,
+                output_tokens,
+                created_at
+            FROM social_producer.agent_events
+            WHERE session_id = {session_id:String}
+            ORDER BY created_at, event_id
+            """,
+            parameters={"session_id": session_id},
+        )
+    else:
+        result = client.query("""
+            SELECT
+                event_id,
+                session_id,
+                parent_agent,
+                agent_name,
+                event_type,
+                tool_name,
+                campaign_id,
+                content_id,
+                status,
+                error_code,
+                model_name,
+                grounding_result,
+                latency_ms,
+                input_tokens,
+                output_tokens,
+                created_at
+            FROM social_producer.agent_events
+            ORDER BY created_at, event_id
+        """)
+
+    events = []
+
+    for row in result.result_rows:
+        events.append(
+            {
+                "event_id": row[0],
+                "session_id": row[1],
+                "parent_agent": row[2],
+                "agent_name": row[3],
+                "event_type": row[4],
+                "tool_name": row[5],
+                "campaign_id": row[6],
+                "content_id": row[7],
+                "status": row[8],
+                "error_code": row[9],
+                "model_name": row[10],
+                "grounding_result": row[11],
+                "latency_ms": row[12],
+                "input_tokens": row[13],
+                "output_tokens": row[14],
+                "created_at": row[15],
+            }
+        )
+
+    return events

@@ -6022,3 +6022,340 @@ Agent Reliability / Performance Analytics
 
 This functionality has not yet been implemented.
 
+## ClickHouse MCP Integration and Agent Observability
+
+The AI Social Producer integrates **Google ADK agents with ClickHouse through the Model Context Protocol (MCP)**.
+
+This allows the agent system to retrieve campaign and content information directly from ClickHouse while also recording agent execution telemetry back into ClickHouse.
+
+### Architecture
+
+The current data-grounding flow is:
+
+```text
+User
+  ↓
+Google ADK / Gemini
+  ↓
+social_media_producer
+  ↓
+MCP Toolset
+  ↓
+mcp-clickhouse
+  ↓
+ClickHouse
+  ↓
+Grounded Response
+```
+
+Agent activity is observed separately:
+
+```text
+Agent / Tool Execution
+  ↓
+ADK Callbacks
+  ↓
+Event Logger
+  ↓
+ClickHouse agent_events
+```
+
+ClickHouse therefore currently serves two important roles in the project:
+
+1. **Application data storage**
+   - `campaigns`
+   - `content_items`
+
+2. **Agent observability**
+   - `agent_events`
+
+---
+
+### MCP Tools
+
+The ClickHouse MCP integration currently exposes three read-only tools to the agent:
+
+| Tool | Purpose |
+|---|---|
+| `list_databases` | Discover available ClickHouse databases |
+| `list_tables` | Inspect tables and their schemas |
+| `run_query` | Execute read-only SQL queries against ClickHouse |
+
+The MCP server is launched automatically by Google ADK using **stdio transport**.
+
+The agent therefore does **not** require a separately running MCP HTTP server.
+
+Application writes continue to use the project's controlled Python database functions, while MCP access remains read-only.
+
+```text
+CLICKHOUSE_ALLOW_WRITE_ACCESS=false
+```
+
+---
+
+### MCP Configuration
+
+The ADK-to-ClickHouse MCP configuration is defined in:
+
+```text
+social_producer/clickhouse_mcp.py
+```
+
+The project uses Google ADK's `McpToolset` with `StdioConnectionParams`.
+
+The MCP executable is installed permanently at:
+
+```text
+/home/gery/.local/bin/mcp-clickhouse
+```
+
+The MCP subprocess receives its ClickHouse connection settings from the project environment.
+
+During development, an MCP lifecycle issue was encountered with the experimental graceful-error-handling path in the current Google ADK environment.
+
+The development configuration therefore uses:
+
+```text
+ADK_DISABLE_MCP_GRACEFUL_ERROR_HANDLING=1
+```
+
+With this configuration, ADK successfully initialises the MCP session and discovers the ClickHouse tools.
+
+---
+
+### Verified MCP Grounding
+
+The integration was tested end-to-end using **Campaign ID 3**.
+
+The `social_media_producer` agent was explicitly instructed to retrieve the campaign directly from ClickHouse through MCP instead of using the application's `list_campaigns` tool.
+
+The MCP `run_query` tool successfully returned:
+
+| Field | Value |
+|---|---|
+| Campaign ID | 3 |
+| Brand Name | Ubuntu Frame Studios |
+| Objective | Build awareness and audience engagement leading up to the premiere |
+| Target Audience | African film audiences aged 18 to 35 |
+| Platforms | Instagram, TikTok, Facebook, YouTube |
+| Duration | 28 days |
+| Status | draft |
+
+This verifies the following runtime path:
+
+```text
+User Request
+      │
+      ▼
+social_media_producer
+      │
+      ▼
+MCP run_query
+      │
+      ▼
+ClickHouse
+      │
+      ▼
+Campaign Data
+      │
+      ▼
+Gemini Grounded Response
+```
+
+The response returned by the agent matched the data stored in ClickHouse.
+
+---
+
+## Agent Observability
+
+The project also records agent and tool execution telemetry in ClickHouse.
+
+The `agent_events` table provides visibility into how the multi-agent system behaves at runtime.
+
+### agent_events Schema
+
+The table currently records:
+
+| Column | Purpose |
+|---|---|
+| `event_id` | Unique event identifier |
+| `session_id` | ADK session associated with the event |
+| `parent_agent` | Parent agent where applicable |
+| `agent_name` | Agent responsible for the event |
+| `event_type` | Type of agent event |
+| `tool_name` | Tool that was executed |
+| `campaign_id` | Related campaign when available |
+| `content_id` | Related content item when available |
+| `status` | Execution status |
+| `error_code` | Error information when execution fails |
+| `model_name` | Gemini model associated with the execution |
+| `grounding_result` | Grounding/review result when applicable |
+| `latency_ms` | Tool execution latency |
+| `input_tokens` | Input token telemetry |
+| `output_tokens` | Output token telemetry |
+| `created_at` | Event timestamp |
+
+This provides the foundation for analysing:
+
+- agent activity;
+- tool usage;
+- tool failures;
+- execution latency;
+- grounding behaviour;
+- campaign-related agent activity;
+- content-related agent activity; and
+- model usage.
+
+---
+
+### Verified Automatic MCP Telemetry
+
+A live ADK session successfully produced the following automatic MCP events:
+
+| Event ID | Tool | Status | Latency |
+|---:|---|---|---:|
+| 11 | `list_databases` | success | 1,751 ms |
+| 12 | `list_tables` | success | 2,545 ms |
+| 13 | `run_query` | success | 919 ms |
+
+All three events were generated under the same ADK session:
+
+```text
+e-0189a426-cb92-4ce3-8376-64d28c32d7ac
+```
+
+This proves that MCP execution is not only working but is also being captured automatically by the project's observability layer.
+
+The complete flow is now:
+
+```text
+                         ┌──────────────────────┐
+                         │        User          │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ Google ADK / Gemini  │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                      ┌───────────────────────────┐
+                      │  social_media_producer    │
+                      └─────────────┬─────────────┘
+                                    │
+                       ┌────────────┴────────────┐
+                       │                         │
+                       ▼                         ▼
+              ┌─────────────────┐       ┌─────────────────┐
+              │  MCP Toolset    │       │  ADK Callbacks  │
+              └────────┬────────┘       └────────┬────────┘
+                       │                         │
+                       ▼                         ▼
+              ┌─────────────────┐       ┌─────────────────┐
+              │ mcp-clickhouse  │       │  Event Logger   │
+              └────────┬────────┘       └────────┬────────┘
+                       │                         │
+                       └────────────┬────────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │     ClickHouse       │
+                         ├──────────────────────┤
+                         │ campaigns            │
+                         │ content_items        │
+                         │ agent_events         │
+                         └──────────────────────┘
+```
+
+---
+
+### Current Observability Limitation
+
+Generic MCP `run_query` events currently record:
+
+```text
+campaign_id = NULL
+content_id  = NULL
+```
+
+even when the SQL query targets a specific campaign.
+
+This happens because the MCP callback receives a SQL statement such as:
+
+```sql
+SELECT ...
+FROM social_producer.campaigns
+WHERE campaign_id = 3
+```
+
+rather than receiving `campaign_id` as a separate structured tool argument.
+
+The query itself is still successfully executed and the MCP event is correctly recorded.
+
+A later observability enhancement can extract entity identifiers from MCP query metadata or introduce additional query metadata fields.
+
+---
+
+## MCP Troubleshooting Notes
+
+During integration, direct MCP testing worked before MCP tool discovery worked reliably inside the full ADK application.
+
+The debugging process confirmed each layer independently:
+
+```text
+ClickHouse connectivity          ✓
+mcp-clickhouse installation      ✓
+stdio transport                  ✓
+MCP ClientSession                ✓
+MCP initialise handshake         ✓
+MCP list_tools                   ✓
+Google ADK McpToolset            ✓
+MCP run_query                    ✓
+Grounded agent response          ✓
+Automatic agent telemetry        ✓
+```
+
+An important lesson from this debugging process is that **an MCP server being reachable does not automatically mean its tools have been successfully registered with an agent**.
+
+The final integration verifies the complete path from the ADK agent, through MCP, into ClickHouse and back to the model.
+
+---
+
+## Current ClickHouse Integration Status
+
+| Capability | Status |
+|---|---|
+| Campaign storage | ✅ Working |
+| Content item storage | ✅ Working |
+| ClickHouse Python client | ✅ Working |
+| MCP server | ✅ Working |
+| MCP stdio transport | ✅ Working |
+| ADK MCP tool discovery | ✅ Working |
+| `list_databases` | ✅ Working |
+| `list_tables` | ✅ Working |
+| `run_query` | ✅ Working |
+| Campaign grounding through MCP | ✅ Working |
+| Agent event logging | ✅ Working |
+| Automatic MCP telemetry | ✅ Working |
+| Tool latency tracking | ✅ Working |
+| Campaign ID extraction from MCP SQL | ⏳ Planned |
+| Token telemetry | ⏳ Planned |
+| ClickHouse agent analytics | ⏳ Next phase |
+
+### Next Phase
+
+The next phase will build analytics on top of `agent_events` so that ClickHouse can be used to analyse the behaviour of the agent system itself.
+
+Planned analytics include:
+
+- tool usage frequency;
+- tool success and failure rates;
+- average and percentile latency;
+- agent activity by session;
+- campaign-related agent activity;
+- grounding success;
+- error patterns;
+- model usage; and
+- token usage when available.
+
+This will extend ClickHouse from being only the application's operational data store into an **analytics and observability platform for the multi-agent system**.
