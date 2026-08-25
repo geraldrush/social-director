@@ -6956,3 +6956,2412 @@ Measure Again
 ```
 
 The next major milestone is to persist the approved experimental content item, generate controlled simulated results for the experiment, and allow the analytics/optimisation layer to determine whether Recommendation ID 1 actually improved campaign performance.
+
+
+# Development Update: Verified Campaign Fact Grounding
+
+**Date:** 24 August 2026  
+**Project:** Premiere — AI Studio Producer  
+**Campaign:** Campaign ID 3 — Shadows of Pretoria
+
+---
+
+## 1. Problem Identified
+
+During generation of **Content ID 14**, the Content Generation Agent needed to include the premiere date for *Shadows of Pretoria*.
+
+The first generated draft contained:
+
+> The atmosphere is building. 🎬✨
+>
+> Get ready for the official premiere on [Insert Verified Premiere Date].
+>
+> Are you ready? Let us know in the comments below! 👇
+
+The Content Generator correctly refused to invent the premiere date.
+
+The problem was not that the premiere date was unknown to us. We had already established that the premiere date was **20 October 2026**.
+
+The problem was architectural:
+
+**The premiere date was not stored in a structured source of verified facts that the Content Generator could retrieve.**
+
+This demonstrated an important grounding principle for the project:
+
+> Information discussed during development should not automatically be treated as verified information by an AI agent.
+
+The agent needs an explicit, retrievable source of trusted facts.
+
+---
+
+## 2. Solution: Verified Campaign Facts
+
+A new ClickHouse table was created:
+
+`campaign_facts`
+
+Its purpose is to store factual campaign information that has been explicitly verified and can therefore be safely used by agents.
+
+The table was created with:
+
+```sql
+CREATE TABLE IF NOT EXISTS social_producer.campaign_facts
+(
+    campaign_id UInt64,
+    fact_key String,
+    fact_value String,
+    verification_status LowCardinality(String) DEFAULT 'verified',
+    source String DEFAULT 'human',
+    created_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (campaign_id, fact_key);
+```
+
+This introduces a distinction between:
+
+- campaign planning information;
+- verified factual information;
+- generated content;
+- performance data.
+
+---
+
+## 3. Verified Facts Added for Campaign 3
+
+Four verified facts were added for Campaign ID 3.
+
+| Fact Key | Value | Verification Status | Source |
+|---|---|---|---|
+| `project_title` | Shadows of Pretoria | verified | human |
+| `project_type` | Fictional crime drama | verified | human |
+| `premiere_date` | 2026-10-20 | verified | human |
+| `primary_market` | South Africa | verified | human |
+
+These facts were inserted using:
+
+```sql
+INSERT INTO social_producer.campaign_facts
+    (campaign_id, fact_key, fact_value, verification_status, source)
+VALUES
+    (3, 'project_title', 'Shadows of Pretoria', 'verified', 'human'),
+    (3, 'project_type', 'Fictional crime drama', 'verified', 'human'),
+    (3, 'premiere_date', '2026-10-20', 'verified', 'human'),
+    (3, 'primary_market', 'South Africa', 'verified', 'human');
+```
+
+---
+
+## 4. Verification in ClickHouse
+
+The records were checked directly from the running ClickHouse Docker container.
+
+Command:
+
+```bash
+docker exec -it clickhouse-server clickhouse-client \
+  --user social_producer \
+  --database social_producer \
+  --query "
+SELECT
+    campaign_id,
+    fact_key,
+    fact_value,
+    verification_status,
+    source
+FROM campaign_facts
+WHERE campaign_id = 3
+ORDER BY fact_key;
+"
+```
+
+The result confirmed:
+
+```text
+3   premiere_date    2026-10-20             verified   human
+3   primary_market   South Africa           verified   human
+3   project_title    Shadows of Pretoria    verified   human
+3   project_type     Fictional crime drama  verified   human
+```
+
+The verified facts were therefore successfully stored in ClickHouse.
+
+---
+
+## 5. Python Database Integration
+
+A new function was added to:
+
+`social_producer/database.py`
+
+The function is:
+
+```python
+get_campaign_facts(campaign_id)
+```
+
+Its responsibility is to retrieve campaign facts from the `campaign_facts` ClickHouse table.
+
+An initial implementation attempted to use:
+
+```python
+client = get_client()
+```
+
+However, `database.py` did not contain a `get_client()` function.
+
+This resulted in:
+
+```text
+NameError: name 'get_client' is not defined
+```
+
+The project already had a module-level ClickHouse client created near the top of `database.py`.
+
+The function was therefore corrected to use the existing `client`.
+
+After the fix, the function was tested with:
+
+```bash
+python -c "from social_producer.database import get_campaign_facts; print(get_campaign_facts(3))"
+```
+
+The result was:
+
+```python
+[
+    {
+        'fact_key': 'premiere_date',
+        'fact_value': '2026-10-20',
+        'verification_status': 'verified',
+        'source': 'human'
+    },
+    {
+        'fact_key': 'primary_market',
+        'fact_value': 'South Africa',
+        'verification_status': 'verified',
+        'source': 'human'
+    },
+    {
+        'fact_key': 'project_title',
+        'fact_value': 'Shadows of Pretoria',
+        'verification_status': 'verified',
+        'source': 'human'
+    },
+    {
+        'fact_key': 'project_type',
+        'fact_value': 'Fictional crime drama',
+        'verification_status': 'verified',
+        'source': 'human'
+    }
+]
+```
+
+This confirmed that Python could successfully retrieve the verified facts from ClickHouse.
+
+---
+
+## 6. Content Generator Upgrade
+
+Before this change, the Content Generator used two main sources of information:
+
+```text
+Content Item
+     +
+Campaign
+     ↓
+Content Generator
+```
+
+This was insufficient for factual grounding.
+
+The Content Generator architecture was upgraded to:
+
+```text
+Content Item
+     ↓
+Campaign
+     ↓
+Verified Campaign Facts
+     ↓
+Content Generator
+     ↓
+Grounded Draft
+```
+
+The Content Generator now has access to:
+
+1. the planned content item;
+2. the campaign context;
+3. verified campaign facts.
+
+---
+
+## 7. New Content Generator Tool
+
+A new tool was added:
+
+```python
+get_verified_campaign_facts(campaign_id)
+```
+
+This tool retrieves campaign facts and exposes only facts whose verification status is:
+
+```text
+verified
+```
+
+Conceptually:
+
+```text
+campaign_facts
+      ↓
+get_campaign_facts()
+      ↓
+Filter verification_status == "verified"
+      ↓
+get_verified_campaign_facts()
+      ↓
+Content Generator
+```
+
+This means the Content Generator now has a structured source of facts that it is explicitly allowed to use.
+
+---
+
+## 8. Grounding Rules Added to the Content Generator
+
+The Content Generator was instructed to distinguish between **planning information** and **verified factual information**.
+
+### Planning Information
+
+Examples include:
+
+- content topic;
+- content purpose;
+- content type;
+- campaign objective.
+
+Planning information describes what the content should discuss.
+
+It does **not** prove that a factual claim is true.
+
+For example:
+
+```text
+Topic:
+Behind-the-Scenes Production Teaser
+```
+
+does not automatically prove that behind-the-scenes footage exists.
+
+### Verified Information
+
+Verified information comes from the campaign facts system.
+
+For Campaign ID 3, examples include:
+
+```text
+project_title  = Shadows of Pretoria
+project_type   = Fictional crime drama
+premiere_date  = 2026-10-20
+primary_market = South Africa
+```
+
+These facts can be used in generated content because they have been explicitly verified.
+
+---
+
+## 9. Anti-Hallucination Rules
+
+The Content Generator was explicitly instructed not to invent:
+
+- statistics;
+- testimonials;
+- cast members;
+- characters;
+- plot details;
+- filming locations;
+- film setting;
+- reviews;
+- awards;
+- quotes;
+- premiere venue;
+- ticket availability;
+- ticket links;
+- streaming availability;
+- streaming links;
+- distribution information;
+- promotional assets that have not been verified.
+
+An important rule was also added:
+
+> Do not infer facts from a film title.
+
+For example:
+
+```text
+Shadows of Pretoria
+```
+
+does **not** prove:
+
+```text
+The film is set in Pretoria.
+```
+
+The title and the setting are separate facts.
+
+Unless the setting is stored as a verified campaign fact, the Content Generator must not make that claim.
+
+---
+
+## 10. Content ID 14 Grounding Test
+
+The new grounding architecture was tested using **Content ID 14**.
+
+### Content Item Details
+
+**Content ID:** 14  
+**Campaign ID:** 3  
+**Platform:** TikTok  
+**Content Type:** experiment  
+**Campaign Day:** 19  
+**Status:** planned
+
+**Topic:**
+
+> TikTok Atmosphere & Premiere Reminder Experiment
+
+**Purpose:**
+
+> Test whether combining TikTok's high-engagement atmosphere format with an explicit verified premiere-date call-to-action can increase click-through performance above the current TikTok baseline.
+
+---
+
+## 11. Result Before Verified Facts
+
+Before the `campaign_facts` integration, the Content Generator produced:
+
+> The atmosphere is building. 🎬✨
+>
+> Get ready for the official premiere on [Insert Verified Premiere Date].
+>
+> Are you ready? Let us know in the comments below! 👇
+
+It also reported that no verified premiere date was available.
+
+This was actually correct behaviour.
+
+The agent did **not hallucinate a date**.
+
+Instead, it stopped and requested verified information.
+
+The failure was therefore not an AI safety failure.
+
+It revealed a missing piece in our data architecture.
+
+---
+
+## 12. Result After Verified Facts
+
+After adding `campaign_facts` and giving the Content Generator access to `get_verified_campaign_facts()`, Content ID 14 was tested again.
+
+The Content Generator successfully retrieved:
+
+- **Project Title:** Shadows of Pretoria
+- **Project Type:** Fictional crime drama
+- **Premiere Date:** 2026-10-20
+- **Primary Market:** South Africa
+
+It then generated:
+
+> Shadows of Pretoria arrives on October 20, 2026. Mark your calendars for the premiere of this fictional crime drama! 🎬✨ #ShadowsOfPretoria #SouthAfrica #FilmPremiere
+
+The agent also correctly reported:
+
+> Nothing has been saved. Stopped for human review.
+
+This confirms that the grounding pipeline worked while preserving the human approval boundary.
+
+---
+
+## 13. Human Review
+
+The generated copy was grounded, but a small wording improvement was identified.
+
+The phrase:
+
+> Shadows of Pretoria arrives on October 20, 2026.
+
+was changed to:
+
+> Shadows of Pretoria premieres on 20 October 2026.
+
+This maps more directly to the stored fact:
+
+```text
+premiere_date = 2026-10-20
+```
+
+### Human-Reviewed Draft
+
+> Shadows of Pretoria premieres on 20 October 2026. Mark your calendars for this fictional crime drama. 🎬✨  
+> #ShadowsOfPretoria #SouthAfrica #FilmPremiere
+
+This is the currently approved wording for the next stage of the workflow.
+
+---
+
+## 14. Why This Change Matters
+
+This is an important architectural improvement.
+
+Previously, the system effectively had:
+
+```text
+Campaign
+    ↓
+Content Plan
+    ↓
+AI Generation
+```
+
+The improved system now has:
+
+```text
+Campaign
+    ↓
+Content Plan
+    ↓
+Verified Facts
+    ↓
+AI Generation
+```
+
+The AI is no longer expected to decide by itself which campaign information should be trusted as factual.
+
+Instead, factual claims can be grounded against structured ClickHouse records.
+
+---
+
+## 15. Current Data Responsibilities
+
+The project is developing a clear separation of responsibilities.
+
+### `campaigns`
+
+Stores high-level campaign configuration.
+
+Examples:
+
+- objective;
+- target audience;
+- platforms;
+- duration;
+- campaign status.
+
+### `content_items`
+
+Stores the content plan and generated content lifecycle.
+
+Examples:
+
+- platform;
+- content type;
+- topic;
+- content purpose;
+- campaign day;
+- generated copy;
+- status.
+
+### `campaign_facts`
+
+Stores verified factual information that agents may use as evidence.
+
+Examples:
+
+- project title;
+- premiere date;
+- project type;
+- primary market.
+
+### `content_performance_daily`
+
+Stores aggregated campaign/content performance.
+
+Examples:
+
+- impressions;
+- views;
+- likes;
+- comments;
+- shares;
+- saves;
+- clicks.
+
+### `optimisation_recommendations`
+
+Stores optimisation decisions and recommendations generated from performance analysis.
+
+---
+
+## 16. Current Agentic Flow
+
+The project can now demonstrate the following workflow:
+
+```text
+Campaign
+   ↓
+Content Planning
+   ↓
+Content Published / Simulated
+   ↓
+ClickHouse Performance Data
+   ↓
+Analytics Agent
+   ↓
+Performance Analysis
+   ↓
+Optimisation Agent
+   ↓
+Optimisation Recommendation
+   ↓
+Human Approval
+   ↓
+Content Planner
+   ↓
+New Experiment Content Item
+   ↓
+Content Generator
+   ↓
+Verified Campaign Facts from ClickHouse
+   ↓
+Grounded Draft
+   ↓
+Human Review
+   ↓
+Review Agent
+   ↓
+Approved Content
+```
+
+For the current experiment:
+
+```text
+Campaign ID 3
+     ↓
+Performance Data
+     ↓
+Analytics Agent
+     ↓
+TikTok:
+High engagement / lower CTR
+
+Instagram:
+Lower engagement / higher CTR
+     ↓
+Optimisation Agent
+     ↓
+Hypothesis:
+Test stronger CTA behaviour
+     ↓
+Human Approval
+     ↓
+Content Planner
+     ↓
+Content ID 14
+TikTok Atmosphere &
+Premiere Reminder Experiment
+     ↓
+Content Generator
+     ↓
+campaign_facts
+     ↓
+Verified premiere date:
+20 October 2026
+     ↓
+Grounded TikTok Draft
+     ↓
+Human Review
+     ← CURRENT POSITION
+```
+
+---
+
+## 17. ClickHouse's Expanded Role
+
+ClickHouse is now serving more than one purpose in the project.
+
+It is being used for:
+
+### Campaign State
+
+Campaign and content records are stored and retrieved from ClickHouse.
+
+### Performance Analytics
+
+Engagement and performance data is aggregated and analysed from ClickHouse.
+
+### Optimisation
+
+Performance data is used by the Optimisation Agent to produce recommendations and experiments.
+
+### Grounding
+
+Verified campaign facts stored in ClickHouse are now used by the Content Generator to prevent unsupported factual claims.
+
+This creates a loop:
+
+```text
+CREATE
+   ↓
+PUBLISH / SIMULATE
+   ↓
+MEASURE
+   ↓
+ClickHouse
+   ↓
+ANALYSE
+   ↓
+OPTIMISE
+   ↓
+PLAN
+   ↓
+GROUND
+   ↓
+GENERATE
+   ↓
+REVIEW
+   ↓
+CREATE AGAIN
+```
+
+---
+
+## 18. Milestone Achieved
+
+The project has now demonstrated an end-to-end connection between:
+
+- campaign planning;
+- content generation;
+- ClickHouse storage;
+- performance analytics;
+- optimisation;
+- experiment creation;
+- verified factual grounding;
+- human approval.
+
+Most importantly, the system demonstrated that an agent can recognise when it lacks verified information, refuse to invent that information, retrieve newly supplied verified facts from ClickHouse, and then regenerate grounded content using those facts.
+
+---
+
+## 19. Current Position
+
+**Content ID 14 is currently at the human-review stage.**
+
+The reviewed copy is:
+
+> Shadows of Pretoria premieres on 20 October 2026. Mark your calendars for this fictional crime drama. 🎬✨  
+> #ShadowsOfPretoria #SouthAfrica #FilmPremiere
+
+The content has **not yet been saved as the final draft**.
+
+---
+
+## 20. Next Step
+
+The next development steps are:
+
+1. Save the human-reviewed copy for **Content ID 14**.
+2. Confirm that its status changes appropriately from `planned` to `draft`.
+3. Send Content ID 14 to the **Review Agent**.
+4. Verify that the Review Agent passes the grounded content.
+5. Continue the experiment lifecycle.
+6. Later simulate or ingest performance for Content ID 14.
+7. Compare its TikTok CTR against the existing TikTok baseline.
+8. Determine whether the optimisation hypothesis was supported.
+
+---
+
+**Development checkpoint:** Verified campaign-fact grounding is working end-to-end.
+
+
+# Development Update: Closed-Loop Optimisation Experiment Completed
+
+**Date:** 25 August 2026  
+**Project:** Premiere — AI Studio Producer  
+**Campaign:** Campaign ID 3 — Shadows of Pretoria  
+**Recommendation:** Recommendation ID 1  
+**Experiment Content:** Content ID 14
+
+---
+
+## 1. Objective
+
+The objective of this milestone was to complete the first full optimisation experiment generated from campaign-performance evidence.
+
+The system had previously identified that TikTok generated strong engagement but comparatively weaker click-through performance.
+
+The established TikTok baseline was:
+
+```text
+Impressions:       82,400
+Views:             69,200
+Engagement Rate:   19.08%
+Click Rate:         1.60%
+```
+
+This led to the hypothesis that combining TikTok's high-engagement atmosphere format with a stronger click-oriented call-to-action could improve click-through performance without substantially reducing engagement.
+
+---
+
+## 2. Persisted Optimisation Recommendation
+
+The first optimisation recommendation had already been persisted in:
+
+```text
+social_producer.optimisation_recommendations
+```
+
+The stored record was independently queried.
+
+Schema:
+
+```text
+recommendation_id
+campaign_id
+recommendation_type
+observation
+hypothesis
+recommendation
+experiment
+experiment_content_id
+success_metric
+status
+created_at
+```
+
+Recommendation ID 1 currently contains:
+
+```text
+recommendation_id:
+1
+
+campaign_id:
+3
+
+recommendation_type:
+platform_experiment
+
+observation:
+TikTok generated 82,400 impressions and 69,200 views with
+a 19.08% engagement rate, but its click rate was 1.60%.
+
+hypothesis:
+Adding a stronger action-oriented CTA to a high-engagement
+TikTok format may increase click-through performance.
+
+recommendation:
+Test a CTA-oriented TikTok post while preserving the
+behind-the-scenes or atmosphere format that performed strongly.
+
+experiment:
+Create a TikTok experiment combining a high-engagement
+creative format with an explicit verified campaign CTA.
+
+experiment_content_id:
+14
+
+success_metric:
+TikTok click rate exceeds the current 1.60% baseline without
+a substantial reduction in engagement.
+
+status:
+applied_to_plan
+```
+
+This independently confirms the relationship:
+
+```text
+Recommendation ID 1
+        ↓
+Campaign ID 3
+        ↓
+Experiment Content ID 14
+```
+
+---
+
+## 3. Experiment Content Item
+
+The approved optimisation recommendation was fed back into the Content Planning Agent.
+
+The resulting experiment was persisted as:
+
+```text
+Content ID:       14
+Campaign ID:      3
+Platform:         TikTok
+Content Type:     experiment
+Campaign Day:     19
+Status:           planned
+```
+
+Topic:
+
+```text
+TikTok Atmosphere & Premiere Reminder Experiment
+```
+
+Purpose:
+
+```text
+Test whether combining TikTok's high-engagement atmosphere
+format with an explicit verified premiere-date call-to-action
+can increase click-through performance above the current
+TikTok baseline.
+```
+
+The Content ID 14 record was independently re-queried from ClickHouse through the Python data layer.
+
+---
+
+## 4. Grounding Problem Discovered
+
+The first attempt to generate Content ID 14 exposed a grounding limitation.
+
+The Content Generation Agent returned:
+
+> Get ready for the official premiere on [Insert Verified Premiere Date].
+
+Although the premiere date had previously been established during development, it was not available through the agent's accessible campaign data.
+
+The agent correctly refused to invent the missing date.
+
+This demonstrated that:
+
+```text
+Information discussed with a human
+        ≠
+Structured verified information available to an agent
+```
+
+---
+
+## 5. Verified Campaign Fact Layer
+
+A new ClickHouse table was therefore introduced:
+
+```text
+campaign_facts
+```
+
+The table stores facts explicitly verified for a campaign.
+
+Campaign 3 currently contains:
+
+```text
+project_title:
+Shadows of Pretoria
+
+project_type:
+Fictional crime drama
+
+premiere_date:
+2026-10-20
+
+primary_market:
+South Africa
+```
+
+All four records use:
+
+```text
+verification_status = verified
+source = human
+```
+
+The Content Generation Agent was upgraded with access to:
+
+```text
+get_verified_campaign_facts()
+```
+
+This allowed the generator to distinguish between planning information and factual evidence.
+
+---
+
+## 6. CTR Experiment Dependency Discovered
+
+After grounding the premiere date, the Review Agent identified another problem.
+
+The experiment was intended to improve:
+
+```text
+Click-Through Rate
+```
+
+but the generated copy used an engagement-oriented CTA:
+
+```text
+Drop a comment below...
+```
+
+The Review Agent correctly returned:
+
+```text
+REVISE
+```
+
+because a comment-based CTA does not directly test click-through behaviour.
+
+However, the Review Agent suggested using a link in the bio to set a reminder.
+
+That functionality had not been verified.
+
+This revealed another important grounding principle:
+
+```text
+A correct review classification
+        ≠
+A automatically grounded suggested rewrite
+```
+
+The campaign therefore required a verified click destination before a CTR experiment could be meaningfully tested.
+
+---
+
+## 7. Simulated CTA Destination
+
+Because Campaign 3 is a fictional development campaign, a clearly simulated campaign destination was added.
+
+Verified campaign facts were extended with:
+
+```text
+cta_type:
+simulated_premiere_landing_page
+
+cta_url:
+https://premiere.example/shadows-of-pretoria
+```
+
+The `.example` domain was intentionally used so the destination could not be confused with a real production website.
+
+The complete Campaign 3 verified-fact set became:
+
+```text
+cta_type
+    → simulated_premiere_landing_page
+
+cta_url
+    → https://premiere.example/shadows-of-pretoria
+
+premiere_date
+    → 2026-10-20
+
+primary_market
+    → South Africa
+
+project_title
+    → Shadows of Pretoria
+
+project_type
+    → Fictional crime drama
+```
+
+These values were independently retrieved from ClickHouse after insertion.
+
+---
+
+## 8. Final Grounded Experiment Draft
+
+The Content Generation Agent retrieved:
+
+- Content ID 14;
+- Campaign ID 3 context;
+- verified campaign facts;
+- the simulated campaign CTA destination.
+
+The final human-approved draft was:
+
+> The atmosphere is shifting. Get ready for the premiere of the fictional crime drama Shadows of Pretoria on 20 October 2026.
+>
+> Visit the campaign page to learn more:  
+> https://premiere.example/shadows-of-pretoria 🔗✨
+>
+> #ShadowsOfPretoria #FilmPremiere
+
+The draft avoids unsupported claims involving:
+
+- tickets;
+- ticket sales;
+- RSVP functionality;
+- reminders;
+- venue information;
+- streaming availability;
+- cast;
+- plot;
+- setting.
+
+---
+
+## 9. Draft Persistence
+
+The final human-approved experiment copy was persisted using:
+
+```python
+save_generated_content(14, content_text)
+```
+
+The write returned:
+
+```text
+saved = True
+content_id = 14
+status = draft
+```
+
+An independent re-query confirmed:
+
+```text
+content_id:
+14
+
+campaign_id:
+3
+
+platform:
+TikTok
+
+content_type:
+experiment
+
+status:
+draft
+```
+
+The stored `content_text` matched the human-approved experiment copy.
+
+---
+
+## 10. Review Agent Result
+
+The persisted Content ID 14 draft was submitted to the Review Agent.
+
+The agent evaluated:
+
+- factual grounding;
+- experiment-purpose alignment;
+- TikTok suitability;
+- atmosphere-oriented framing;
+- verified premiere date;
+- verified CTA destination;
+- unsupported functionality or claims.
+
+The Review Agent returned:
+
+```text
+Recommendation: PASS
+```
+
+It reported:
+
+```text
+Issues: None
+
+Suggested changes: None
+```
+
+Content ID 14 therefore successfully passed the project's review stage.
+
+---
+
+## 11. Experiment Success Criteria
+
+The original success metric stored with Recommendation ID 1 was:
+
+```text
+TikTok click rate exceeds the current 1.60% baseline
+without a substantial reduction in engagement.
+```
+
+Before inserting the simulated experiment result, this was converted into explicit development thresholds.
+
+Baseline:
+
+```text
+TikTok CTR:
+1.60%
+
+TikTok Engagement Rate:
+19.08%
+```
+
+Experiment success criteria:
+
+```text
+CTR > 1.60%
+
+AND
+
+Engagement Rate >= 17.08%
+```
+
+The 17.08% floor represents a maximum tolerated engagement reduction of:
+
+```text
+2.00 percentage points
+```
+
+from the 19.08% baseline.
+
+The thresholds were defined before evaluating the simulated experiment result.
+
+---
+
+## 12. Simulated Experiment Events
+
+The experiment used simulated development telemetry.
+
+The following Content ID 14 events were inserted into:
+
+```text
+engagement_events
+```
+
+with:
+
+```text
+source = simulated_experiment
+```
+
+Dataset:
+
+```text
+Impressions:  20,000
+Views:        16,500
+Likes:         2,400
+Comments:        320
+Shares:          500
+Saves:           300
+Clicks:          460
+```
+
+Raw events were independently queried after insertion.
+
+The result confirmed:
+
+```text
+click       460
+comment     320
+impression  20000
+like        2400
+save        300
+share       500
+view        16500
+```
+
+All records were labelled:
+
+```text
+simulated_experiment
+```
+
+The dataset must therefore not be represented as real-world social-media performance.
+
+---
+
+## 13. ClickHouse Materialized View Processing
+
+No aggregate performance row was manually inserted.
+
+The raw events flowed through:
+
+```text
+engagement_events
+        ↓
+mv_content_performance_daily
+        ↓
+content_performance_daily
+```
+
+The existing ClickHouse Materialized View automatically aggregated the events.
+
+The resulting Content ID 14 performance row was:
+
+```text
+Date:
+2026-08-25
+
+Campaign ID:
+3
+
+Content ID:
+14
+
+Platform:
+TikTok
+
+Impressions:
+20,000
+
+Views:
+16,500
+
+Likes:
+2,400
+
+Comments:
+320
+
+Shares:
+500
+
+Saves:
+300
+
+Clicks:
+460
+
+CTR:
+2.30%
+
+Engagement Rate:
+17.60%
+```
+
+This independently demonstrated the raw-event → materialized-view → analytical-table pipeline.
+
+---
+
+## 14. Experiment Performance
+
+The experiment result was compared against the TikTok baseline.
+
+### CTR
+
+```text
+Baseline:
+1.60%
+
+Experiment:
+2.30%
+
+Absolute change:
++0.70 percentage points
+
+Relative change:
++43.75%
+```
+
+### Engagement Rate
+
+```text
+Baseline:
+19.08%
+
+Experiment:
+17.60%
+
+Absolute change:
+-1.48 percentage points
+```
+
+The engagement-rate reduction remained inside the predefined 2.00 percentage-point tolerance.
+
+---
+
+## 15. Analytics Agent Evaluation
+
+The Analytics Agent retrieved the experiment performance from ClickHouse and evaluated it against the predefined criteria.
+
+It calculated:
+
+```text
+Content ID 14 CTR:
+2.30%
+
+Content ID 14 Engagement Rate:
+17.60%
+```
+
+It evaluated:
+
+```text
+CTR > 1.60%
+PASS
+
+Engagement >= 17.08%
+PASS
+```
+
+The Analytics Agent concluded:
+
+```text
+Overall Experiment Result:
+SUCCESSFUL
+```
+
+The agent explicitly stated that the result was based on:
+
+```text
+simulated development telemetry
+```
+
+and should not be represented as evidence of real-world campaign effectiveness.
+
+---
+
+## 16. Optimisation Agent Evaluation
+
+The completed experiment was then evaluated by the Optimisation Agent.
+
+The agent independently confirmed:
+
+```text
+CTR:
+2.30%
+
+Baseline CTR:
+1.60%
+
+Absolute CTR improvement:
++0.70 percentage points
+
+Relative CTR improvement:
++43.75%
+```
+
+It also confirmed:
+
+```text
+Experiment engagement:
+17.60%
+
+Baseline engagement:
+19.08%
+
+Difference:
+-1.48 percentage points
+```
+
+The Optimisation Agent determined that both predefined success criteria had passed.
+
+It concluded that the original hypothesis was:
+
+```text
+SUPPORTED
+```
+
+by the available simulated campaign data.
+
+---
+
+## 17. Optimisation Agent Strategic Decision
+
+The Optimisation Agent did not recommend immediate strategy adoption.
+
+Instead it returned:
+
+```text
+TEST FURTHER
+```
+
+Reason:
+
+- the dataset is simulated;
+- the experiment represents a single experimental content item;
+- the result should not be treated as statistically definitive;
+- further controlled testing should be performed before adopting the strategy more broadly.
+
+This demonstrates appropriate separation between:
+
+```text
+Experiment succeeded against predefined criteria
+```
+
+and:
+
+```text
+Strategy proven in the real world
+```
+
+The latter has not been demonstrated.
+
+---
+
+## 18. Proposed Follow-Up Experiment
+
+The Optimisation Agent proposed a larger replication test comparing:
+
+```text
+Atmosphere + CTA content
+```
+
+against:
+
+```text
+standard promotional content
+```
+
+The specific sample size and thresholds proposed by the agent should be treated as advisory experimental-design suggestions rather than statistically validated requirements.
+
+A formal statistical power calculation has not been implemented.
+
+---
+
+## 19. Human Approval Boundary Preserved
+
+The Optimisation Agent correctly stopped before making any state-changing action.
+
+It explicitly did not:
+
+- modify Campaign 3;
+- create new content;
+- update Recommendation ID 1;
+- schedule anything;
+- publish anything;
+- approve its own recommendation.
+
+The agent returned the experiment analysis for human review.
+
+The system therefore preserved the workflow:
+
+```text
+Performance
+    ↓
+Analytics Agent
+    ↓
+Optimisation Agent
+    ↓
+Recommendation / interpretation
+    ↓
+STOP
+    ↓
+Human decision
+```
+
+---
+
+## 20. First Complete Optimisation Loop
+
+Premiere has now demonstrated the following full development loop:
+
+```text
+Campaign Content
+        ↓
+Simulated Engagement Events
+        ↓
+ClickHouse
+        ↓
+Materialized View
+        ↓
+Campaign Performance
+        ↓
+Analytics Agent
+        ↓
+Performance Weakness Identified
+        ↓
+Optimisation Agent
+        ↓
+Recommendation ID 1
+        ↓
+Human Approval
+        ↓
+Content Planner
+        ↓
+Content ID 14 Experiment
+        ↓
+Verified Campaign Facts
+        ↓
+Content Generator
+        ↓
+Human Approval
+        ↓
+Review Agent
+        ↓
+PASS
+        ↓
+Simulated Experiment Telemetry
+        ↓
+ClickHouse Materialized View
+        ↓
+Analytics Agent
+        ↓
+Experiment SUCCESSFUL
+        ↓
+Optimisation Agent
+        ↓
+Hypothesis SUPPORTED
+        ↓
+Recommendation: TEST FURTHER
+        ↓
+Human Review
+```
+
+This is the first complete evidence-driven optimisation cycle demonstrated by the project.
+
+---
+
+## 21. Why This Milestone Matters
+
+The project has now moved beyond:
+
+```text
+Prompt
+  ↓
+LLM
+  ↓
+Social Media Post
+```
+
+and can demonstrate:
+
+```text
+Plan
+  ↓
+Generate
+  ↓
+Ground
+  ↓
+Review
+  ↓
+Measure
+  ↓
+Analyse
+  ↓
+Optimise
+  ↓
+Experiment
+  ↓
+Measure Again
+  ↓
+Learn
+```
+
+ClickHouse participates throughout the workflow as:
+
+- operational campaign memory;
+- verified campaign-fact storage;
+- engagement-event storage;
+- materialized performance analytics;
+- agent observability;
+- optimisation recommendation memory;
+- experiment-performance evidence.
+
+---
+
+## 22. Current Recommendation State
+
+The current database record for Recommendation ID 1 remains:
+
+```text
+recommendation_id:
+1
+
+campaign_id:
+3
+
+experiment_content_id:
+14
+
+status:
+applied_to_plan
+```
+
+The existing schema does not yet contain dedicated fields for:
+
+- experiment result;
+- baseline CTR;
+- experiment CTR;
+- engagement baseline;
+- experiment engagement;
+- outcome;
+- follow-up decision;
+- evaluated_at.
+
+Therefore the experiment result has been analytically demonstrated but has **not yet been persisted as structured recommendation outcome data**.
+
+This is the next database-design question.
+
+---
+
+## 23. Current Project Position
+
+The first closed-loop optimisation experiment is now functionally complete at the analysis level.
+
+Verified:
+
+```text
+[✓] Performance weakness identified
+[✓] Optimisation recommendation created
+[✓] Human approval preserved
+[✓] Recommendation fed back into planning
+[✓] Content ID 14 experiment persisted
+[✓] Verified campaign facts introduced
+[✓] Grounded experiment copy generated
+[✓] Review Agent PASS
+[✓] Simulated experiment events inserted
+[✓] Materialized View aggregation verified
+[✓] Experiment CTR calculated
+[✓] Experiment engagement calculated
+[✓] Analytics Agent evaluation completed
+[✓] Optimisation Agent evaluation completed
+[✓] Original hypothesis supported by simulated data
+[✓] Optimisation Agent stopped for human review
+```
+
+Still incomplete:
+
+```text
+[ ] Persist structured experiment outcome
+[ ] Record recommendation outcome lifecycle
+[ ] Build agent_events analytics
+[ ] Build final Premiere UI
+[ ] Production Google Cloud deployment
+[ ] Real social-media data integration
+[ ] Native ClickHouse vector retrieval
+```
+
+---
+
+## 24. Next Step
+
+The next technical decision is how experiment outcomes should be persisted.
+
+Current Recommendation ID 1 stores:
+
+```text
+recommendation
+experiment
+experiment_content_id
+success_metric
+status
+```
+
+but does not store measured outcomes.
+
+The next implementation should therefore decide between:
+
+1. extending `optimisation_recommendations`; or
+2. creating a dedicated experiment-results table.
+
+A dedicated experiment-results model may be preferable because a recommendation can eventually produce multiple experiments.
+
+After that milestone, development can shift toward the Premiere user interface and hackathon demo experience.
+
+---
+
+**Development checkpoint:** Premiere has demonstrated its first complete simulated campaign optimisation and learning loop.
+
+
+# Development Update: Experiment Outcome Persistence
+
+**Date:** 25 August 2026  
+**Project:** Premiere — AI Studio Producer  
+**Campaign:** Campaign ID 3 — Shadows of Pretoria  
+**Recommendation:** Recommendation ID 1  
+**Experiment Content:** Content ID 14  
+**Experiment Result:** Experiment Result ID 1
+
+---
+
+## 1. Objective
+
+The objective of this milestone was to persist the measured outcome of the first optimisation experiment as structured ClickHouse data.
+
+The project had already demonstrated:
+
+```text
+Performance data
+      ↓
+Analytics Agent
+      ↓
+Optimisation Agent
+      ↓
+Recommendation ID 1
+      ↓
+Human Approval
+      ↓
+Content Planner
+      ↓
+Content ID 14 experiment
+      ↓
+Content Generation
+      ↓
+Verified campaign facts
+      ↓
+Review Agent PASS
+      ↓
+Simulated experiment telemetry
+      ↓
+Analytics evaluation
+      ↓
+Optimisation evaluation
+```
+
+However, the experiment result still existed primarily as analytical output.
+
+The goal of this milestone was to give Premiere persistent memory of:
+
+- which recommendation produced the experiment;
+- which content item represented the experiment;
+- what the baseline was;
+- what the experiment achieved;
+- whether the predefined success criteria were met;
+- and what the next strategic decision should be.
+
+---
+
+## 2. Why a Separate Experiment Result Model Was Introduced
+
+The existing table:
+
+```text
+optimisation_recommendations
+```
+
+stores the recommendation lifecycle.
+
+For example:
+
+```text
+recommendation_id = 1
+status = applied_to_plan
+experiment_content_id = 14
+```
+
+This describes what the system recommended and whether that recommendation was applied to planning.
+
+It does **not** describe the measured outcome of the resulting experiment.
+
+These are separate concepts:
+
+```text
+Recommendation Lifecycle
+------------------------
+proposed
+approved
+applied_to_plan
+```
+
+versus:
+
+```text
+Experiment Outcome
+------------------
+successful
+failed
+inconclusive
+```
+
+A recommendation may also eventually produce more than one experiment.
+
+For this reason, experiment results were separated into their own ClickHouse table.
+
+---
+
+## 3. New ClickHouse Table
+
+A new table was created:
+
+```text
+social_producer.experiment_results
+```
+
+Schema:
+
+```sql
+CREATE TABLE IF NOT EXISTS social_producer.experiment_results
+(
+    experiment_result_id UInt64,
+    recommendation_id UInt64,
+    campaign_id UInt64,
+    content_id UInt64,
+    platform LowCardinality(String),
+
+    baseline_ctr Float64,
+    experiment_ctr Float64,
+    ctr_change_pp Float64,
+    ctr_relative_change_pct Float64,
+
+    baseline_engagement_rate Float64,
+    experiment_engagement_rate Float64,
+    engagement_change_pp Float64,
+
+    success UInt8,
+    outcome LowCardinality(String),
+    decision LowCardinality(String),
+
+    data_source LowCardinality(String) DEFAULT 'simulated',
+    evaluated_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (
+    recommendation_id,
+    campaign_id,
+    content_id,
+    experiment_result_id
+);
+```
+
+The table was independently verified with:
+
+```sql
+DESCRIBE TABLE experiment_results;
+```
+
+---
+
+## 4. Experiment Evaluation Function
+
+A new Python database function was introduced:
+
+```python
+evaluate_and_save_experiment_result()
+```
+
+Its responsibility is to:
+
+1. retrieve experiment performance from ClickHouse;
+2. calculate CTR;
+3. calculate engagement rate;
+4. compare the experiment against its baseline;
+5. evaluate success criteria;
+6. determine an outcome;
+7. persist the result into `experiment_results`.
+
+This is important because experiment results are not manually typed into the database.
+
+Premiere derives them from the same ClickHouse performance data used by the Analytics and Optimisation Agents.
+
+---
+
+## 5. Baseline Handling
+
+The first experiment used the pre-experiment TikTok baseline:
+
+```text
+CTR:
+1.60%
+
+Engagement Rate:
+19.08%
+```
+
+The minimum acceptable engagement rate was defined as:
+
+```text
+17.08%
+```
+
+This represented a maximum tolerated reduction of:
+
+```text
+2.00 percentage points
+```
+
+from the original TikTok engagement rate.
+
+The success rules were therefore:
+
+```text
+CTR > 1.60%
+
+AND
+
+Engagement Rate >= 17.08%
+```
+
+The baseline values were supplied explicitly to the evaluation function.
+
+This prevents the experiment from contaminating its own baseline after Content ID 14 becomes part of TikTok campaign performance.
+
+---
+
+## 6. Application-Level Evaluation
+
+The experiment evaluation function was executed for:
+
+```text
+Experiment Result ID:
+1
+
+Recommendation ID:
+1
+
+Campaign ID:
+3
+
+Content ID:
+14
+
+Platform:
+TikTok
+```
+
+The function returned:
+
+```text
+baseline_ctr:
+1.60
+
+experiment_ctr:
+2.30
+
+ctr_change_pp:
++0.70
+
+ctr_relative_change_pct:
++43.75
+
+baseline_engagement_rate:
+19.08
+
+experiment_engagement_rate:
+17.60
+
+engagement_change_pp:
+-1.48
+
+minimum_engagement_rate:
+17.08
+
+ctr_passed:
+True
+
+engagement_passed:
+True
+
+success:
+True
+
+outcome:
+successful
+
+decision:
+test_further
+
+data_source:
+simulated_experiment
+```
+
+---
+
+## 7. Outcome Interpretation
+
+### Click-Through Rate
+
+```text
+Baseline CTR:
+1.60%
+
+Experiment CTR:
+2.30%
+
+Absolute improvement:
++0.70 percentage points
+
+Relative improvement:
++43.75%
+```
+
+The CTR criterion passed.
+
+### Engagement Rate
+
+```text
+Baseline Engagement Rate:
+19.08%
+
+Experiment Engagement Rate:
+17.60%
+
+Absolute change:
+-1.48 percentage points
+```
+
+The experiment remained above the predefined minimum engagement floor of:
+
+```text
+17.08%
+```
+
+The engagement criterion therefore also passed.
+
+---
+
+## 8. Experiment Outcome
+
+The application classified the experiment as:
+
+```text
+success = 1
+outcome = successful
+decision = test_further
+```
+
+This distinction is important.
+
+The experiment was successful **against the predefined development criteria**.
+
+However, the strategic decision remains:
+
+```text
+test_further
+```
+
+because:
+
+- the telemetry is simulated;
+- Content ID 14 represents a single experimental post;
+- no real-world audience behaviour has been observed;
+- statistical significance has not been established.
+
+The system therefore does not treat one simulated positive result as sufficient evidence for permanent strategy adoption.
+
+---
+
+## 9. Independent ClickHouse Verification
+
+The experiment result was independently queried directly from ClickHouse:
+
+```sql
+SELECT *
+FROM experiment_results
+WHERE experiment_result_id = 1
+FORMAT Vertical;
+```
+
+The database returned:
+
+```text
+experiment_result_id:       1
+recommendation_id:          1
+campaign_id:                3
+content_id:                 14
+platform:                   TikTok
+
+baseline_ctr:               1.6
+experiment_ctr:             2.3
+ctr_change_pp:              0.7
+ctr_relative_change_pct:    43.75
+
+baseline_engagement_rate:   19.08
+experiment_engagement_rate: 17.6
+engagement_change_pp:       -1.48
+
+success:                    1
+outcome:                    successful
+decision:                   test_further
+data_source:                simulated_experiment
+
+evaluated_at:
+2026-08-25 16:01:36
+```
+
+This independently proves that the experiment result was persisted successfully.
+
+---
+
+## 10. Optimisation Memory Architecture
+
+Premiere now has three separate optimisation memory layers.
+
+### Optimisation Recommendation
+
+```text
+optimisation_recommendations
+```
+
+Answers:
+
+> What did the system recommend?
+
+Example:
+
+```text
+Recommendation ID 1
+```
+
+---
+
+### Experiment Content
+
+```text
+content_items
+```
+
+Answers:
+
+> What campaign experiment was created from the recommendation?
+
+Example:
+
+```text
+Content ID 14
+```
+
+---
+
+### Experiment Outcome
+
+```text
+experiment_results
+```
+
+Answers:
+
+> What happened when the experiment was measured?
+
+Example:
+
+```text
+Experiment Result ID 1
+```
+
+The relationship is:
+
+```text
+optimisation_recommendations
+        │
+        │ recommendation_id = 1
+        ▼
+content_items
+        │
+        │ content_id = 14
+        ▼
+experiment_results
+        │
+        │ experiment_result_id = 1
+        ▼
+Measured Outcome
+```
+
+---
+
+## 11. Full Closed-Loop State
+
+The project can now demonstrate:
+
+```text
+Campaign Content
+        ↓
+Simulated Engagement
+        ↓
+ClickHouse
+        ↓
+Performance Aggregation
+        ↓
+Analytics Agent
+        ↓
+Optimisation Agent
+        ↓
+Recommendation ID 1
+        ↓
+Human Approval
+        ↓
+Content Planner
+        ↓
+Content ID 14 Experiment
+        ↓
+Verified Campaign Facts
+        ↓
+Content Generator
+        ↓
+Human Approval
+        ↓
+Review Agent PASS
+        ↓
+Simulated Experiment Events
+        ↓
+ClickHouse Materialized View
+        ↓
+Analytics Agent
+        ↓
+Experiment Evaluation
+        ↓
+Optimisation Agent
+        ↓
+Hypothesis Supported
+        ↓
+Python Experiment Evaluation
+        ↓
+experiment_results
+        ↓
+Experiment Result ID 1
+        ↓
+Decision: TEST FURTHER
+        ↓
+Human Review
+```
+
+This closes the first persistent optimisation-learning loop in Premiere.
+
+---
+
+## 12. Why This Milestone Matters
+
+The system now remembers not only:
+
+```text
+What content was created
+```
+
+and:
+
+```text
+What recommendation was made
+```
+
+but also:
+
+```text
+What happened after the recommendation was tested
+```
+
+That creates a stronger foundation for future agent behaviour.
+
+For example, later agents will be able to query:
+
+```text
+Which recommendations succeeded?
+
+Which experiments failed?
+
+Which types of experiments repeatedly improved CTR?
+
+Which recommendations produced unacceptable engagement loss?
+
+Which strategies should be tested again?
+```
+
+This moves Premiere closer to evidence-based campaign memory rather than conversation-only reasoning.
+
+---
+
+## 13. Current ClickHouse Role
+
+ClickHouse now supports:
+
+```text
+Campaign State
+    campaigns
+
+Content State
+    content_items
+
+Verified Grounding
+    campaign_facts
+
+Raw Performance Events
+    engagement_events
+
+Materialized Performance
+    content_performance_daily
+
+Optimisation Memory
+    optimisation_recommendations
+
+Experiment Outcomes
+    experiment_results
+
+Agent Observability
+    agent_events
+```
+
+The architecture is therefore increasingly centred around ClickHouse as both:
+
+```text
+Operational Memory
++
+Analytical Memory
++
+Agent Observability
++
+Optimisation Memory
+```
+
+---
+
+## 14. Milestone Status
+
+Completed:
+
+```text
+[✓] experiment_results table created
+[✓] table schema independently verified
+[✓] experiment evaluation function implemented
+[✓] experiment performance retrieved from ClickHouse
+[✓] CTR calculated programmatically
+[✓] engagement rate calculated programmatically
+[✓] success criteria evaluated programmatically
+[✓] result persisted by Python
+[✓] Experiment Result ID 1 created
+[✓] independent ClickHouse re-query performed
+[✓] persisted values matched application calculation
+[✓] Recommendation ID 1 linked to Content ID 14
+[✓] Content ID 14 linked to Experiment Result ID 1
+[✓] decision persisted as test_further
+```
+
+---
+
+## 15. Current Project Position
+
+The first closed-loop optimisation experiment is now complete through persistent outcome storage.
+
+The main backend intelligence path is therefore demonstrated:
+
+```text
+Create
+  ↓
+Measure
+  ↓
+Analyse
+  ↓
+Optimise
+  ↓
+Experiment
+  ↓
+Measure Again
+  ↓
+Evaluate
+  ↓
+Persist Learning
+```
+
+The next major development direction is no longer another large backend agent.
+
+The project should now begin exposing this architecture through the **Premiere hackathon UI**.
+
+---
+
+## 16. Next Major Milestone
+
+The next major milestone is:
+
+```text
+Premiere User Interface
+```
+
+The UI should allow a hackathon reviewer to understand and inspect:
+
+- Campaign 3;
+- verified film facts;
+- campaign content;
+- agent workflow;
+- platform analytics;
+- Recommendation ID 1;
+- Content ID 14;
+- baseline vs experiment performance;
+- Experiment Result ID 1;
+- agent execution/observability data;
+- human approval boundaries.
+
+The first UI should focus on demonstrating the already-working backend rather than introducing additional campaign functionality.
+
+---
+
+**Development checkpoint:** Experiment outcomes are now persisted as structured optimisation memory in ClickHouse.

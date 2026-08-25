@@ -941,3 +941,213 @@ def approve_optimisation_recommendation(
         "campaign_id": campaign_id,
         "recommendation_status": "approved",
     }
+
+def get_campaign_facts(campaign_id: int):
+    """
+    Return verified facts associated with a campaign.
+    """
+
+    result = client.query(
+        """
+        SELECT
+            fact_key,
+            fact_value,
+            verification_status,
+            source
+        FROM campaign_facts
+        WHERE campaign_id = %(campaign_id)s
+        ORDER BY fact_key
+        """,
+        parameters={"campaign_id": campaign_id},
+    )
+
+    return [
+        {
+            "fact_key": row[0],
+            "fact_value": row[1],
+            "verification_status": row[2],
+            "source": row[3],
+        }
+        for row in result.result_rows
+    ]
+
+def evaluate_and_save_experiment_result(
+    experiment_result_id: int,
+    recommendation_id: int,
+    campaign_id: int,
+    content_id: int,
+    baseline_ctr: float,
+    baseline_engagement_rate: float,
+    minimum_engagement_rate: float,
+    decision: str = "test_further",
+    data_source: str = "simulated_experiment",
+):
+    """
+    Calculate an experiment result from ClickHouse performance data
+    and persist the evaluated outcome.
+
+    Rates are expressed as percentages, e.g. 1.60 means 1.60%.
+    """
+
+    # Retrieve the experiment's aggregated performance.
+    result = client.query(
+        """
+        SELECT
+            any(platform) AS platform,
+            sum(impressions) AS impressions,
+            sum(likes) AS likes,
+            sum(comments) AS comments,
+            sum(shares) AS shares,
+            sum(saves) AS saves,
+            sum(clicks) AS clicks
+        FROM content_performance_daily
+        WHERE campaign_id = %(campaign_id)s
+          AND content_id = %(content_id)s
+        """,
+        parameters={
+            "campaign_id": campaign_id,
+            "content_id": content_id,
+        },
+    )
+
+    if not result.result_rows:
+        return {
+            "error": f"No performance data found for content {content_id}."
+        }
+
+    row = result.result_rows[0]
+
+    platform = row[0]
+    impressions = row[1]
+    likes = row[2]
+    comments = row[3]
+    shares = row[4]
+    saves = row[5]
+    clicks = row[6]
+
+    if impressions == 0:
+        return {
+            "error": f"Content {content_id} has zero impressions."
+        }
+
+    total_engagement = likes + comments + shares + saves
+
+    experiment_ctr = round((clicks / impressions) * 100, 2)
+    experiment_engagement_rate = round(
+        (total_engagement / impressions) * 100,
+        2,
+    )
+
+    ctr_change_pp = round(
+        experiment_ctr - baseline_ctr,
+        2,
+    )
+
+    if baseline_ctr > 0:
+        ctr_relative_change_pct = round(
+            ((experiment_ctr - baseline_ctr) / baseline_ctr) * 100,
+            2,
+        )
+    else:
+        ctr_relative_change_pct = 0.0
+
+    engagement_change_pp = round(
+        experiment_engagement_rate - baseline_engagement_rate,
+        2,
+    )
+
+    ctr_passed = experiment_ctr > baseline_ctr
+    engagement_passed = (
+        experiment_engagement_rate >= minimum_engagement_rate
+    )
+
+    success = 1 if ctr_passed and engagement_passed else 0
+
+    if success:
+        outcome = "successful"
+    elif ctr_passed or engagement_passed:
+        outcome = "inconclusive"
+    else:
+        outcome = "failed"
+
+    # Prevent duplicate result IDs.
+    existing = client.query(
+        """
+        SELECT count()
+        FROM experiment_results
+        WHERE experiment_result_id = %(experiment_result_id)s
+        """,
+        parameters={
+            "experiment_result_id": experiment_result_id,
+        },
+    )
+
+    if existing.result_rows[0][0] > 0:
+        return {
+            "error": (
+                f"Experiment result ID {experiment_result_id} "
+                "already exists."
+            )
+        }
+
+    client.insert(
+        "experiment_results",
+        [[
+            experiment_result_id,
+            recommendation_id,
+            campaign_id,
+            content_id,
+            platform,
+            baseline_ctr,
+            experiment_ctr,
+            ctr_change_pp,
+            ctr_relative_change_pct,
+            baseline_engagement_rate,
+            experiment_engagement_rate,
+            engagement_change_pp,
+            success,
+            outcome,
+            decision,
+            data_source,
+        ]],
+        column_names=[
+            "experiment_result_id",
+            "recommendation_id",
+            "campaign_id",
+            "content_id",
+            "platform",
+            "baseline_ctr",
+            "experiment_ctr",
+            "ctr_change_pp",
+            "ctr_relative_change_pct",
+            "baseline_engagement_rate",
+            "experiment_engagement_rate",
+            "engagement_change_pp",
+            "success",
+            "outcome",
+            "decision",
+            "data_source",
+        ],
+    )
+
+    return {
+        "experiment_result_id": experiment_result_id,
+        "recommendation_id": recommendation_id,
+        "campaign_id": campaign_id,
+        "content_id": content_id,
+        "platform": platform,
+        "baseline_ctr": baseline_ctr,
+        "experiment_ctr": experiment_ctr,
+        "ctr_change_pp": ctr_change_pp,
+        "ctr_relative_change_pct": ctr_relative_change_pct,
+        "baseline_engagement_rate": baseline_engagement_rate,
+        "experiment_engagement_rate": experiment_engagement_rate,
+        "engagement_change_pp": engagement_change_pp,
+        "minimum_engagement_rate": minimum_engagement_rate,
+        "ctr_passed": ctr_passed,
+        "engagement_passed": engagement_passed,
+        "success": bool(success),
+        "outcome": outcome,
+        "decision": decision,
+        "data_source": data_source,
+    }
