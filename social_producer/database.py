@@ -23,6 +23,7 @@ client = clickhouse_connect.get_client(
     username=os.getenv("CLICKHOUSE_USER"),
     password=os.getenv("CLICKHOUSE_PASSWORD"),
     database=os.getenv("CLICKHOUSE_DATABASE"),
+    autogenerate_session_id=False,
 )
 
 

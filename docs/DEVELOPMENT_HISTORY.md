@@ -9365,3 +9365,1071 @@ The first UI should focus on demonstrating the already-working backend rather th
 ---
 
 **Development checkpoint:** Experiment outcomes are now persisted as structured optimisation memory in ClickHouse.
+
+# Development Update: Premiere UI and Live ClickHouse Integration
+
+**Date:** 25 August 2026  
+**Project:** Premiere — AI Studio Producer  
+**Frontend:** Next.js  
+**API:** FastAPI  
+**Data Platform:** ClickHouse
+
+---
+
+## 1. Objective
+
+The objective of this milestone was to begin exposing Premiere's already-working backend architecture through a dedicated hackathon user interface.
+
+Until this point, most functionality had been demonstrated through:
+
+```text
+Terminal commands
+Google ADK Web
+ClickHouse queries
+Agent traces
+Python functions
+```
+
+The project now begins presenting those capabilities as a coherent product experience.
+
+The UI is intended to become the visual control room for:
+
+```text
+Campaign Management
+      ↓
+Agent Analysis
+      ↓
+Optimisation
+      ↓
+Human Approval
+      ↓
+Content Production
+      ↓
+Experimentation
+      ↓
+Measurement
+      ↓
+Learning
+```
+
+---
+
+## 2. Frontend Technology Decision
+
+The frontend was created using:
+
+```text
+Next.js 16.3.3
+React
+TypeScript
+Tailwind CSS
+App Router
+Turbopack
+```
+
+The application was created inside:
+
+```text
+frontend/
+```
+
+using:
+
+```bash
+npx create-next-app@latest frontend
+```
+
+The recommended Next.js defaults were selected.
+
+The resulting project structure includes:
+
+```text
+frontend/
+├── app/
+│   ├── layout.tsx
+│   ├── page.tsx
+│   └── globals.css
+├── public/
+├── package.json
+├── next.config.ts
+└── ...
+```
+
+---
+
+## 3. Local Frontend Runtime
+
+The frontend is currently run locally with:
+
+```bash
+cd frontend
+npm run dev
+```
+
+The development server runs at:
+
+```text
+http://localhost:3000
+```
+
+Next.js successfully started using:
+
+```text
+Next.js 16.3.3
+Turbopack
+```
+
+The initial starter page loaded successfully.
+
+---
+
+## 4. Premiere UI Direction
+
+The hackathon UI is being designed as an:
+
+```text
+AI Studio Control Room
+```
+
+rather than only as a conventional analytics dashboard.
+
+The goal is to allow judges to visually follow the agent workflow:
+
+```text
+Analyse
+   ↓
+Recommend
+   ↓
+Human Review
+   ↓
+Plan
+   ↓
+Generate
+   ↓
+Review
+   ↓
+Experiment
+   ↓
+Measure
+   ↓
+Learn
+```
+
+The intended major UI modules are:
+
+```text
+Overview
+Insights
+Content
+Experiments
+Activity
+```
+
+---
+
+## 5. Initial Dashboard Shell
+
+The first Premiere dashboard shell was implemented in:
+
+```text
+frontend/app/page.tsx
+```
+
+The first version displayed:
+
+- Premiere branding;
+- Campaign 3;
+- Ubuntu Frame Studios;
+- Shadows of Pretoria;
+- campaign objective;
+- campaign audience;
+- campaign duration;
+- campaign status;
+- platform-performance cards;
+- campaign optimisation information;
+- agent-team information.
+
+The initial performance values were temporarily hard-coded only to establish the visual structure and information hierarchy.
+
+---
+
+## 6. Python API Layer Introduced
+
+To replace hard-coded UI data with real project state, a lightweight API layer was introduced using:
+
+```text
+FastAPI
+```
+
+The API is defined in:
+
+```text
+social_producer/api.py
+```
+
+and runs locally using:
+
+```bash
+uvicorn social_producer.api:app --reload --port 8001
+```
+
+The API is available at:
+
+```text
+http://localhost:8001
+```
+
+---
+
+## 7. API Architecture
+
+The current UI data path is:
+
+```text
+Premiere Next.js UI
+        ↓
+FastAPI
+        ↓
+database.py
+        ↓
+clickhouse-connect
+        ↓
+ClickHouse
+```
+
+This API path is separate from the existing agent-facing MCP integration.
+
+The full architecture remains:
+
+```text
+Premiere Next.js UI
+        ↓
+FastAPI / Application API
+        ↓
+Python / Google ADK
+        ↓
+Premiere Director + Specialist Agents
+        │
+        ├──────────── Agent Read Path ────────────┐
+        │                                         │
+        ▼                                         ▼
+ADK MCPToolset                            Controlled Python Tools
+        ↓                                         ↓
+official mcp-clickhouse                   database.py
+        ↓                                         ↓
+        └──────────────────┬──────────────────────┘
+                           ↓
+                       ClickHouse
+```
+
+MCP remains an important part of agent-to-ClickHouse access.
+
+The ordinary UI does not need to use MCP for every application read.
+
+---
+
+## 8. Initial API Endpoints
+
+The initial FastAPI layer exposes read-only endpoints including:
+
+```text
+GET /health
+
+GET /campaigns/{campaign_id}
+
+GET /campaigns/{campaign_id}/facts
+
+GET /campaigns/{campaign_id}/performance
+
+GET /campaigns/{campaign_id}/platforms
+
+GET /content/{content_id}
+```
+
+The health endpoint successfully returned:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+---
+
+## 9. Campaign 3 API Verification
+
+The API successfully retrieved Campaign ID 3.
+
+Returned data included:
+
+```text
+campaign_id:
+3
+
+brand_name:
+Ubuntu Frame Studios
+
+objective:
+Build awareness and audience engagement leading up to the premiere.
+
+target_audience:
+African film audiences aged 18 to 35
+
+platforms:
+Instagram
+TikTok
+Facebook
+YouTube
+
+duration_days:
+28
+
+status:
+draft
+```
+
+This verified:
+
+```text
+Next application layer
+        ↓
+FastAPI
+        ↓
+database.py
+        ↓
+ClickHouse campaigns table
+```
+
+---
+
+## 10. FastAPI / ClickHouse Concurrency Issue
+
+The first call to:
+
+```text
+GET /campaigns/3/platforms
+```
+
+returned:
+
+```text
+500 Internal Server Error
+```
+
+The underlying ClickHouse error was:
+
+```text
+Attempt to execute concurrent queries within the same session.
+Please use a separate client instance per thread/process.
+```
+
+The issue was caused by the existing global `clickhouse-connect` client using automatically generated session state while FastAPI executed requests in worker threads.
+
+The existing backend had largely operated sequentially, so this concurrency issue had not previously appeared.
+
+---
+
+## 11. ClickHouse Client Concurrency Fix
+
+The shared ClickHouse client configuration was updated with:
+
+```python
+autogenerate_session_id=False
+```
+
+This removed unnecessary shared session state.
+
+The architecture could therefore continue using the shared application client without introducing a new ClickHouse connection for every individual API call.
+
+After restarting FastAPI, the platform endpoint worked successfully.
+
+This demonstrated another runtime lesson:
+
+```text
+Sequential application behaviour
+        ≠
+Concurrent web API behaviour
+```
+
+---
+
+## 12. Live Platform Performance API
+
+After the concurrency fix, the following endpoint worked:
+
+```text
+GET /campaigns/3/platforms
+```
+
+The API returned live Campaign 3 performance directly from ClickHouse.
+
+Current platform data included:
+
+### TikTok
+
+```text
+Impressions:
+102,400
+
+Views:
+85,700
+
+Clicks:
+1,780
+
+Engagement Rate:
+18.79%
+
+Click Rate:
+1.74%
+```
+
+### Instagram
+
+```text
+Impressions:
+42,520
+
+Views:
+24,130
+
+Clicks:
+1,236
+
+Engagement Rate:
+11.35%
+
+Click Rate:
+2.91%
+```
+
+### YouTube
+
+```text
+Impressions:
+39,100
+
+Views:
+25,600
+
+Clicks:
+870
+
+Engagement Rate:
+8.42%
+
+Click Rate:
+2.23%
+```
+
+### Facebook
+
+```text
+Impressions:
+9,100
+
+Views:
+3,900
+
+Clicks:
+142
+
+Engagement Rate:
+6.18%
+
+Click Rate:
+1.56%
+```
+
+---
+
+## 13. Important Baseline Distinction
+
+TikTok originally had a pre-experiment baseline of:
+
+```text
+Impressions:
+82,400
+
+CTR:
+1.60%
+
+Engagement Rate:
+19.08%
+```
+
+After Content ID 14 experiment telemetry was added, the current TikTok aggregate became:
+
+```text
+Impressions:
+102,400
+
+CTR:
+1.74%
+
+Engagement Rate:
+18.79%
+```
+
+This difference is expected.
+
+The UI therefore needs to distinguish between:
+
+```text
+Current Campaign Performance
+```
+
+and:
+
+```text
+Historical Experiment Baseline
+```
+
+The experiment baseline must not be recalculated from the current TikTok aggregate.
+
+The historical baseline remains preserved in:
+
+```text
+experiment_results
+```
+
+---
+
+## 14. First Live UI Data Path
+
+The Next.js page was updated to fetch Campaign 3 and platform performance from FastAPI.
+
+The live browser path became:
+
+```text
+Next.js
+   ↓
+fetch()
+   ↓
+FastAPI
+   ↓
+database.py
+   ↓
+clickhouse-connect
+   ↓
+ClickHouse
+```
+
+The Premiere browser UI successfully rendered:
+
+```text
+Campaign 3
+
+Ubuntu Frame Studios
+
+African film audiences aged 18 to 35
+
+28 days
+
+draft
+```
+
+and the current platform metrics directly from ClickHouse.
+
+---
+
+## 15. Live TikTok Verification in UI
+
+The browser displayed:
+
+```text
+TikTok
+
+102,400 impressions
+
+Engagement:
+18.79%
+
+CTR:
+1.74%
+
+1,780 clicks
+85,700 views
+```
+
+These values differ from the earlier hard-coded baseline.
+
+This independently demonstrates that the UI is now rendering current application data rather than static demo constants.
+
+---
+
+## 16. AI Insights Interface
+
+A new:
+
+```text
+Insights
+```
+
+module was introduced.
+
+The UI contains an:
+
+```text
+Analyse Campaign
+```
+
+interaction.
+
+The current visual sequence is:
+
+```text
+Analytics Agent
+      ↓
+Platform Analysis
+      ↓
+Optimisation Agent
+      ↓
+Recommendation
+```
+
+The first version uses short frontend timing transitions to visualise the intended agent workflow.
+
+This is currently a UI simulation of the sequence.
+
+It must not yet be represented as a real-time ADK agent invocation from the UI.
+
+A later milestone will connect this interaction to the actual agent runtime.
+
+---
+
+## 17. Control-Room Navigation
+
+The current navigation includes:
+
+```text
+Overview
+
+Insights
+
+Content
+
+Experiments
+
+Activity
+```
+
+These modules correspond to the intended hackathon demonstration flow.
+
+### Overview
+
+Shows:
+
+- campaign information;
+- current live platform analytics.
+
+### Insights
+
+Shows:
+
+- campaign-analysis workflow;
+- optimisation recommendation.
+
+### Content
+
+Planned to show:
+
+- planned content;
+- generated drafts;
+- review outcomes;
+- approval lifecycle.
+
+### Experiments
+
+Planned to show:
+
+- Recommendation ID 1;
+- Content ID 14;
+- Experiment Result ID 1;
+- baseline vs experiment performance.
+
+### Activity
+
+Planned to show:
+
+- agent execution;
+- MCP calls;
+- tool execution;
+- agent_events telemetry.
+
+---
+
+## 18. Optimisation Recommendation API
+
+A new API endpoint was introduced:
+
+```text
+GET /recommendations/{recommendation_id}
+```
+
+Recommendation ID 1 was successfully retrieved directly from ClickHouse.
+
+The API returned:
+
+```text
+recommendation_id:
+1
+
+campaign_id:
+3
+
+recommendation_type:
+platform_experiment
+
+experiment_content_id:
+14
+
+status:
+applied_to_plan
+```
+
+It also returned the complete stored:
+
+- observation;
+- hypothesis;
+- recommendation;
+- experiment;
+- success metric;
+- creation time.
+
+---
+
+## 19. Recommendation ID 1 Retrieved
+
+The returned recommendation contains:
+
+### Observation
+
+```text
+TikTok generated 82,400 impressions and 69,200 views
+with a 19.08% engagement rate, but its click rate was 1.60%.
+```
+
+### Hypothesis
+
+```text
+Adding a stronger action-oriented CTA to a high-engagement
+TikTok format may increase click-through performance.
+```
+
+### Recommendation
+
+```text
+Test a CTA-oriented TikTok post while preserving the
+behind-the-scenes or atmosphere format that performed strongly.
+```
+
+### Experiment
+
+```text
+Create a TikTok experiment combining a high-engagement creative
+format with an explicit verified campaign CTA.
+```
+
+### Experiment Content
+
+```text
+Content ID:
+14
+```
+
+### Status
+
+```text
+applied_to_plan
+```
+
+---
+
+## 20. UI Lifecycle Correction
+
+The first Insights UI showed:
+
+```text
+Reject
+
+Approve Experiment
+```
+
+for Recommendation ID 1.
+
+This was inconsistent with the actual ClickHouse state because Recommendation ID 1 had already progressed to:
+
+```text
+status = applied_to_plan
+```
+
+and had already created:
+
+```text
+experiment_content_id = 14
+```
+
+The UI was therefore corrected to reflect the persistent application state.
+
+The updated recommendation card displays:
+
+```text
+Recommendation #1
+
+Status:
+APPLIED TO PLAN
+
+Experiment:
+Content ID 14
+```
+
+rather than presenting an approval decision that had already happened.
+
+This establishes an important UI principle:
+
+```text
+Visible workflow state
+        =
+Persistent backend state
+```
+
+wherever possible.
+
+---
+
+## 21. Updated Insights Architecture
+
+The Insights module now combines:
+
+```text
+Current campaign-performance visualisation
+        +
+Persisted optimisation recommendation
+        +
+Recommendation lifecycle state
+        +
+Experiment relationship
+```
+
+The workflow shown to the user is:
+
+```text
+Campaign 3
+        ↓
+Campaign Analysis
+        ↓
+Recommendation #1
+        ↓
+status = applied_to_plan
+        ↓
+Content ID 14
+        ↓
+View Experiment
+```
+
+---
+
+## 22. Current UI Status
+
+Completed:
+
+```text
+[✓] Next.js frontend created
+[✓] TypeScript enabled
+[✓] Tailwind CSS enabled
+[✓] App Router enabled
+[✓] Local frontend running
+[✓] Premiere dashboard shell created
+[✓] Overview navigation created
+[✓] Insights navigation created
+[✓] Content navigation placeholder created
+[✓] Experiments navigation placeholder created
+[✓] Activity navigation placeholder created
+[✓] FastAPI installed
+[✓] Premiere API created
+[✓] API health endpoint working
+[✓] Campaign 3 API working
+[✓] Platform performance API working
+[✓] FastAPI concurrency bug identified
+[✓] ClickHouse session fix implemented
+[✓] Live campaign data rendered in Next.js
+[✓] Live platform analytics rendered in Next.js
+[✓] Recommendation API created
+[✓] Recommendation ID 1 retrieved from ClickHouse
+[✓] Recommendation lifecycle shown in UI
+[✓] Content ID 14 relationship exposed
+```
+
+Still to implement:
+
+```text
+[ ] Real ADK agent invocation from UI
+[ ] Experiment Result API
+[ ] Full Experiments screen
+[ ] Content lifecycle screen
+[ ] Agent Activity screen
+[ ] agent_events API
+[ ] MCP activity visualisation
+[ ] Human approval interaction for new recommendations
+[ ] Final architecture screen
+[ ] Production deployment
+```
+
+---
+
+## 23. Current Product Architecture
+
+The working local product architecture is now:
+
+```text
+                    User
+                     │
+                     ▼
+            Premiere Next.js UI
+                     │
+                     ▼
+                FastAPI
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+          ▼                     ▼
+   Application Reads      Google ADK Runtime
+          │                     │
+          ▼                     │
+      database.py               ├── Content Planner
+          │                     ├── Content Generator
+          ▼                     ├── Review Agent
+ clickhouse-connect             ├── Analytics Agent
+          │                     └── Optimisation Agent
+          │                           │
+          │                           ▼
+          │                       MCPToolset
+          │                           │
+          │                           ▼
+          │                     mcp-clickhouse
+          │                           │
+          └─────────────┬─────────────┘
+                        ▼
+                    ClickHouse
+```
+
+The UI currently uses the application API read path.
+
+The agent runtime continues to use the official MCP integration where appropriate.
+
+---
+
+## 24. Hackathon Demo Direction
+
+The UI is being designed specifically to demonstrate Premiere in action.
+
+The intended video sequence is:
+
+```text
+Campaign Overview
+      ↓
+Analyse Campaign
+      ↓
+Analytics Agent
+      ↓
+Optimisation Recommendation
+      ↓
+Human Approval
+      ↓
+Experiment Content
+      ↓
+Grounded Generation
+      ↓
+Review
+      ↓
+Experiment Telemetry
+      ↓
+ClickHouse
+      ↓
+Experiment Result
+      ↓
+Optimisation Learning
+```
+
+The UI should therefore make the system feel like:
+
+```text
+an AI studio team operating a campaign
+```
+
+rather than simply:
+
+```text
+an analytics dashboard
+```
+
+---
+
+## 25. Next UI Milestone
+
+The next module to implement is:
+
+```text
+Experiments
+```
+
+It should retrieve:
+
+```text
+Recommendation ID 1
+
+Content ID 14
+
+Experiment Result ID 1
+```
+
+from the backend.
+
+The primary visual should show:
+
+```text
+TikTok CTR
+
+Baseline:
+1.60%
+
+        ↓
+
+Experiment:
+2.30%
+
+Relative uplift:
++43.75%
+```
+
+alongside:
+
+```text
+Engagement
+
+Baseline:
+19.08%
+
+Experiment:
+17.60%
+
+Minimum accepted:
+17.08%
+```
+
+and:
+
+```text
+Outcome:
+SUCCESSFUL
+
+Decision:
+TEST FURTHER
+```
+
+This will become one of the strongest visual moments in the hackathon demonstration.
+
+---
+
+**Development checkpoint:** Premiere now has a working Next.js control-room interface reading real Campaign 3 and optimisation data from ClickHouse through FastAPI.
