@@ -19,13 +19,13 @@ load_dotenv(env_path)
 
 client = clickhouse_connect.get_client(
     host=os.getenv("CLICKHOUSE_HOST"),
-    port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
+    port=int(os.getenv("CLICKHOUSE_PORT", "8443")),
     username=os.getenv("CLICKHOUSE_USER"),
     password=os.getenv("CLICKHOUSE_PASSWORD"),
     database=os.getenv("CLICKHOUSE_DATABASE"),
+    secure=os.getenv("CLICKHOUSE_SECURE", "true").lower() == "true",
     autogenerate_session_id=False,
 )
-
 
 # =========================================================
 # CONNECTION TEST
