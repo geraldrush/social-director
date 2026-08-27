@@ -1,0 +1,20 @@
+2026-08-27 13:46:15,114 - INFO - envs.py:90 - No .env file found for social_producer
+2026-08-27 13:46:16,928 - INFO - agent_loader.py:175 - Found root_agent in social_producer.agent
+2026-08-27 13:46:16,929 - INFO - envs.py:90 - No .env file found for social_producer
+2026-08-27 13:46:16,929 - INFO - local_storage.py:89 - Using per-agent session storage rooted at /workspaces/social-director
+2026-08-27 13:46:16,930 - INFO - local_storage.py:121 - Using per-agent artifact storage rooted at /workspaces/social-director
+2026-08-27 13:46:16,930 - INFO - service_factory.py:266 - Using in-memory memory service
+2026-08-27 13:46:16,936 - INFO - local_storage.py:65 - Creating local session service at /workspaces/social-director/social_producer/.adk/session.db
+2026-08-27 13:46:16,954 - WARNING - runners.py:492 - App "social_producer" can transfer between agents but has no context_cache_config. Every transfer swaps the system instruction and the tool set, so the request prefix changes and the whole prompt is re-sent uncached after each transfer. Set context_cache_config on the app to give each agent its own cache.
+2026-08-27 13:47:17,112 - INFO - google_llm.py:223 - Sending out request, model: gemini-3.5-flash, backend: GoogleLLMVariant.VERTEX_AI, stream: False
+2026-08-27 13:47:20,279 - INFO - google_llm.py:293 - Response received from the model.
+2026-08-27 13:47:22,322 - INFO - google_llm.py:223 - Sending out request, model: gemini-3.5-flash, backend: GoogleLLMVariant.VERTEX_AI, stream: False
+2026-08-27 13:47:24,018 - INFO - google_llm.py:293 - Response received from the model.
+2026-08-27 13:47:26,801 - INFO - google_llm.py:223 - Sending out request, model: gemini-3.5-flash, backend: GoogleLLMVariant.VERTEX_AI, stream: False
+2026-08-27 13:47:31,246 - INFO - google_llm.py:293 - Response received from the model.
+2026-08-27 13:47:32,590 - INFO - google_llm.py:223 - Sending out request, model: gemini-3.5-flash, backend: GoogleLLMVariant.VERTEX_AI, stream: False
+2026-08-27 13:47:36,056 - INFO - google_llm.py:293 - Response received from the model.
+2026-08-27 13:47:37,404 - INFO - google_llm.py:223 - Sending out request, model: gemini-3.5-flash, backend: GoogleLLMVariant.VERTEX_AI, stream: False
+2026-08-27 13:47:41,501 - INFO - google_llm.py:293 - Response received from the model.
+2026-08-27 13:47:42,835 - INFO - google_llm.py:223 - Sending out request, model: gemini-3.5-flash, backend: GoogleLLMVariant.VERTEX_AI, stream: False
+2026-08-27 13:47:51,923 - INFO - google_llm.py:293 - Response received from the model.
