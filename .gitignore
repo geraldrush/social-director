@@ -20,3 +20,7 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Temporary ClickHouse migration files
+clickhouse_export/
+clickhouse_export.tar.gz
